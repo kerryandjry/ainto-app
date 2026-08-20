@@ -9,16 +9,21 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::Error;
 
-#[derive(Deserialize, Serialize)]
-#[derive(Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct AliasEntry {
+    #[serde(default)]
     pub alias: String,
+    #[serde(default)]
+    pub hotkey_key_code: Option<u32>,
+    #[serde(default)]
+    pub hotkey_modifiers: Option<u32>,
+    #[serde(default)]
+    pub hotkey_display: Option<String>,
     pub target_type: String,
     pub target_id: String,
 }
 
-#[derive(Deserialize, Serialize)]
-#[derive(Debug, Clone, Default)]
+#[derive(Deserialize, Serialize, Debug, Clone, Default)]
 struct AliasFile {
     #[serde(default)]
     aliases: Vec<AliasEntry>,
@@ -30,11 +35,16 @@ pub fn normalize_alias(value: &str) -> String {
 }
 
 pub fn validate_aliases(aliases: &[AliasEntry]) -> Result<(), String> {
-    let mut seen = HashSet::new();
+    let mut seen_aliases = HashSet::new();
+    let mut seen_hotkeys = HashSet::new();
     for entry in aliases {
         let normalized = normalize_alias(&entry.alias);
-        if normalized.is_empty() {
-            return Err("Alias cannot be empty".into());
+        let hotkey = entry
+            .hotkey_key_code
+            .zip(entry.hotkey_modifiers)
+            .zip(entry.hotkey_display.as_deref());
+        if normalized.is_empty() && hotkey.is_none() {
+            return Err("An alias or shortcut is required".into());
         }
         let valid_target_type = matches!(
             entry.target_type.as_str(),
@@ -43,8 +53,21 @@ pub fn validate_aliases(aliases: &[AliasEntry]) -> Result<(), String> {
         if !valid_target_type || entry.target_id.trim().is_empty() {
             return Err(format!("Alias '{}' has an invalid target", entry.alias));
         }
-        if !seen.insert(normalized) {
+        if !normalized.is_empty() && !seen_aliases.insert(normalized) {
             return Err(format!("Alias '{}' is already in use", entry.alias.trim()));
+        }
+        if let Some(((key_code, modifiers), display)) = hotkey {
+            if modifiers == 0 || display.trim().is_empty() {
+                return Err("Shortcut must include a modifier key".into());
+            }
+            if !seen_hotkeys.insert((key_code, modifiers)) {
+                return Err(format!("Shortcut '{display}' is already in use"));
+            }
+        } else if entry.hotkey_key_code.is_some()
+            || entry.hotkey_modifiers.is_some()
+            || entry.hotkey_display.is_some()
+        {
+            return Err("Shortcut configuration is incomplete".into());
         }
     }
     Ok(())
@@ -82,6 +105,9 @@ mod tests {
     fn entry(alias: &str) -> AliasEntry {
         AliasEntry {
             alias: alias.into(),
+            hotkey_key_code: None,
+            hotkey_modifiers: None,
+            hotkey_display: None,
             target_type: "system_action".into(),
             target_id: "sleep".into(),
         }
@@ -111,7 +137,44 @@ mod tests {
     }
 
     #[test]
-    fn empty_alias_is_rejected() {
+    fn empty_alias_is_rejected_without_a_hotkey() {
         assert!(validate_aliases(&[entry("  ")]).is_err());
+    }
+
+    #[test]
+    fn legacy_entry_without_hotkey_fields_still_loads() {
+        let file: AliasFile = toml::from_str(
+            r#"
+[[aliases]]
+alias = "files"
+target_type = "launcher_command"
+target_id = "file-search"
+"#,
+        )
+        .unwrap();
+        assert_eq!(file.aliases.len(), 1);
+        assert!(file.aliases[0].hotkey_key_code.is_none());
+    }
+
+    #[test]
+    fn hotkey_only_entry_is_valid() {
+        let mut value = entry("");
+        value.hotkey_key_code = Some(8);
+        value.hotkey_modifiers = Some(2048);
+        value.hotkey_display = Some("⌥ C".into());
+        assert!(validate_aliases(&[value]).is_ok());
+    }
+
+    #[test]
+    fn duplicate_hotkeys_are_rejected() {
+        let mut first = entry("clipboard");
+        first.hotkey_key_code = Some(8);
+        first.hotkey_modifiers = Some(2048);
+        first.hotkey_display = Some("⌥ C".into());
+        let mut second = entry("files");
+        second.hotkey_key_code = Some(8);
+        second.hotkey_modifiers = Some(2048);
+        second.hotkey_display = Some("⌥ C".into());
+        assert!(validate_aliases(&[first, second]).is_err());
     }
 }

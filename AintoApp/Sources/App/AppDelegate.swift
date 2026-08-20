@@ -7,6 +7,7 @@ import Sparkle
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var searchPanel: SearchPanel?
     private var hotkeyManager: HotkeyManager?
+    private var aliasHotkeyManager: AliasHotkeyManager?
     private var clipboardMonitor: ClipboardMonitor?
     private var textExpander: TextExpander?
     private var trayManager: TrayManager?
@@ -54,6 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager = HotkeyManager { [weak self] in
             self?.toggleSearchPanel()
         }
+        aliasHotkeyManager = AliasHotkeyManager { [weak self] target in
+            self?.searchPanel?.invokeShortcut(target)
+        }
+        hotkeyManager?.onHotkeyChanged = { [weak self] in
+            self?.aliasHotkeyManager?.reload()
+        }
         // Spotlight/Raycast conflict warnings are handled in SettingsView
 
         // Start clipboard monitoring
@@ -76,6 +83,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(aliasesDidChange),
             name: .aliasesDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(shortcutRecordingDidBegin),
+            name: .shortcutRecordingDidBegin,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(shortcutRecordingDidEnd),
+            name: .shortcutRecordingDidEnd,
             object: nil
         )
 
@@ -120,6 +139,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func aliasesDidChange() {
         searchPanel?.viewModel.reloadAliases()
+        aliasHotkeyManager?.reload()
+    }
+
+    @objc private func shortcutRecordingDidBegin() {
+        hotkeyManager?.suspend()
+        aliasHotkeyManager?.suspend()
+    }
+
+    @objc private func shortcutRecordingDidEnd() {
+        hotkeyManager?.resume()
+        aliasHotkeyManager?.resume()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
