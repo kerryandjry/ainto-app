@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var configWatcherSources: [DispatchSourceFileSystemObject] = []
     private var configWatcherFDs: [Int32] = []
+    private var shortcutResumeWorkItem: DispatchWorkItem?
 
     private var updaterController: SPUStandardUpdaterController?
 
@@ -143,13 +144,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func shortcutRecordingDidBegin() {
+        shortcutResumeWorkItem?.cancel()
+        shortcutResumeWorkItem = nil
         hotkeyManager?.suspend()
         aliasHotkeyManager?.suspend()
     }
 
     @objc private func shortcutRecordingDidEnd() {
-        hotkeyManager?.resume()
-        aliasHotkeyManager?.resume()
+        // Wait until the recorded physical key is released. Registering a key-up
+        // handler immediately can execute an existing shortcut while editing it.
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.hotkeyManager?.resume()
+            self?.aliasHotkeyManager?.resume()
+            self?.shortcutResumeWorkItem = nil
+        }
+        shortcutResumeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -167,10 +167,8 @@ target_id = "file-search"
 
     #[test]
     fn hotkey_only_entry_round_trips_through_toml() {
-        let path = std::env::temp_dir().join(format!(
-            "ainto-alias-hotkey-{}.toml",
-            uuid::Uuid::new_v4()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("ainto-alias-hotkey-{}.toml", uuid::Uuid::new_v4()));
         let mut value = entry("");
         value.hotkey_key_code = Some(8);
         value.hotkey_modifiers = Some(2048);

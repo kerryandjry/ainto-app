@@ -414,23 +414,22 @@ private final class HotkeyRecorderTextField: NSTextField {
     }
 
     override func resignFirstResponder() -> Bool {
-        guard super.resignFirstResponder() else { return false }
-        if isRecording {
-            isRecording = false
-            updateDisplay()
-            NotificationCenter.default.post(name: .shortcutRecordingDidEnd, object: self)
-        }
-        return true
+        // NSTextField can refuse resignation in some field-editor transitions.
+        // Resume global hotkeys regardless so recording never leaves them suspended.
+        finishRecording()
+        return super.resignFirstResponder()
     }
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { // Escape
+            finishRecording()
             window?.makeFirstResponder(nil)
             return
         }
         if event.keyCode == 51 || event.keyCode == 117 { // Delete / Forward Delete
             hotkey = nil
             onChange?(nil)
+            finishRecording()
             window?.makeFirstResponder(nil)
             return
         }
@@ -450,7 +449,15 @@ private final class HotkeyRecorderTextField: NSTextField {
         )
         hotkey = value
         onChange?(value)
+        finishRecording()
         window?.makeFirstResponder(nil)
+    }
+
+    private func finishRecording() {
+        guard isRecording else { return }
+        isRecording = false
+        updateDisplay()
+        NotificationCenter.default.post(name: .shortcutRecordingDidEnd, object: self)
     }
 
     private func updateDisplay() {
