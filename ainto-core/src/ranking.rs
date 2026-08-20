@@ -19,6 +19,12 @@ pub struct RankingEntry {
     pub pinned: bool,
 }
 
+impl Default for RankingEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RankingEntry {
     pub fn new() -> Self {
         Self {
@@ -109,7 +115,7 @@ pub fn increment_and_save(path: &Path, key: &str) -> i32 {
     rankings
         .entry(key.to_string())
         .and_modify(|e| e.increment())
-        .or_insert_with(RankingEntry::new);
+        .or_default();
     let _ = save_rankings(path, &rankings);
     rankings.get(key).map(|e| e.frecency_score()).unwrap_or(0)
 }
@@ -155,10 +161,8 @@ last_used = 123
 
     #[test]
     fn pinned_state_does_not_increase_usage() {
-        let path = std::env::temp_dir().join(format!(
-            "ainto-ranking-pin-{}.toml",
-            uuid::Uuid::new_v4()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("ainto-ranking-pin-{}.toml", uuid::Uuid::new_v4()));
         set_pinned(&path, "/Applications/Test.app", true).unwrap();
         let entry = load_rankings(&path)
             .remove("/Applications/Test.app")
