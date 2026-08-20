@@ -625,15 +625,15 @@ pub extern "C" fn rc_aliases_save(json: *const c_char) -> i32 {
         return -1;
     };
     let Ok(entries) = serde_json::from_str::<Vec<aliases::AliasEntry>>(&json_str) else {
-        return -1;
+        return -2;
     };
     let path = match config::config_dir() {
         Ok(directory) => directory.join("aliases.toml"),
-        Err(_) => return -1,
+        Err(_) => return -3,
     };
     match aliases::save_aliases(&path, &entries) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(_) => -4,
     }
 }
 

@@ -85,6 +85,23 @@ struct AliasTargetOption: Identifiable, Hashable {
     var id: String { "\(ref.kind.rawValue):\(ref.id)" }
 }
 
+enum AliasSaveError: Error {
+    case validation(String)
+    case encoding
+    case core(Int32)
+
+    var message: String {
+        switch self {
+        case .validation(let message): return message
+        case .encoding: return "Aliases and shortcuts could not be encoded."
+        case .core(-2): return "Aliases and shortcuts used an unsupported data format."
+        case .core(-3): return "Ainto could not locate its configuration directory."
+        case .core(-4): return "Ainto could not validate or write aliases.toml."
+        case .core: return "Aliases and shortcuts could not be saved."
+        }
+    }
+}
+
 enum AliasStore {
     static func normalize(_ value: String) -> String {
         value
@@ -127,13 +144,16 @@ enum AliasStore {
     }
 
     @discardableResult
-    static func save(_ aliases: [LauncherAlias]) -> Bool {
-        guard validate(aliases) == nil,
-              let data = try? JSONEncoder().encode(aliases),
+    static func save(_ aliases: [LauncherAlias]) -> Result<Void, AliasSaveError> {
+        if let validationError = validate(aliases) {
+            return .failure(.validation(validationError))
+        }
+        guard let data = try? JSONEncoder().encode(aliases),
               let json = String(data: data, encoding: .utf8)
-        else { return false }
-        guard rc_aliases_save(json) == 0 else { return false }
+        else { return .failure(.encoding) }
+        let status = rc_aliases_save(json)
+        guard status == 0 else { return .failure(.core(status)) }
         NotificationCenter.default.post(name: .aliasesDidChange, object: nil)
-        return true
+        return .success(())
     }
 }

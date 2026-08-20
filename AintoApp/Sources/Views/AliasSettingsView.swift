@@ -29,11 +29,13 @@ struct AliasSettingsView: View {
                     HStack(spacing: 10) {
                         TextField("Optional alias", text: $newAlias)
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 120)
+                            .frame(width: 90)
                         HotkeyRecorderField(hotkey: $newHotkey)
-                            .frame(width: 130, height: 24)
+                            .frame(width: 100, height: 24)
                         SearchableTargetPicker(selection: $selectedTarget, targets: targets)
+                            .frame(minWidth: 130)
                         Button("Add") { addEntry() }
+                            .frame(width: 42)
                             .disabled(
                                 (AliasStore.normalize(newAlias).isEmpty && newHotkey == nil)
                                     || selectedTarget == nil
@@ -54,13 +56,14 @@ struct AliasSettingsView: View {
                             HStack(spacing: 10) {
                                 TextField("Optional", text: $aliases[index].alias)
                                     .textFieldStyle(.roundedBorder)
-                                    .frame(width: 120)
+                                    .frame(width: 90)
                                 HotkeyRecorderField(hotkey: hotkeyBinding(index))
-                                    .frame(width: 130, height: 24)
+                                    .frame(width: 100, height: 24)
                                 SearchableTargetPicker(
                                     selection: targetBinding(index),
                                     targets: targetsIncludingUnavailable(for: aliases[index])
                                 )
+                                .frame(minWidth: 130)
                                 Button {
                                     aliases.remove(at: index)
                                     persist()
@@ -102,8 +105,8 @@ struct AliasSettingsView: View {
 
     private var gridHeader: some View {
         HStack(spacing: 10) {
-            Text("Alias").frame(width: 120, alignment: .leading)
-            Text("Shortcut").frame(width: 130, alignment: .leading)
+            Text("Alias").frame(width: 90, alignment: .leading)
+            Text("Shortcut").frame(width: 100, alignment: .leading)
             Text("Target").frame(maxWidth: .infinity, alignment: .leading)
             Color.clear.frame(width: 28, height: 1)
         }
@@ -171,13 +174,14 @@ struct AliasSettingsView: View {
             savedMessage = nil
             return
         }
-        guard AliasStore.save(aliases) else {
-            validationError = "Aliases and shortcuts could not be saved."
+        switch AliasStore.save(aliases) {
+        case .success:
+            validationError = nil
+            savedMessage = "Aliases and shortcuts saved."
+        case .failure(let error):
+            validationError = error.message
             savedMessage = nil
-            return
         }
-        validationError = nil
-        savedMessage = "Aliases and shortcuts saved."
     }
 
     private static func loadTargets() -> [AliasTargetOption] {
@@ -276,22 +280,17 @@ private struct SearchableTargetPicker: View {
             isPresented.toggle()
         } label: {
             HStack(spacing: 7) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(selectedTarget?.title ?? "Choose a target")
-                        .lineLimit(1)
-                    if let detail = selectedTarget?.detail {
-                        Text(detail)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
+                Text(selectedTarget?.title ?? "Choose a target")
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(selectedTarget.map { "\($0.title) — \($0.detail)" } ?? "Choose a target")
+                Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: 24)
+            .frame(maxWidth: .infinity, minHeight: 26, maxHeight: 26)
             .background(Color.primary.opacity(0.05))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .overlay {
