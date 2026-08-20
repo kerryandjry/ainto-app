@@ -14,6 +14,9 @@ use crate::Error;
 pub struct RankingEntry {
     pub count: i32,
     pub last_used: i64, // unix timestamp
+    /// Whether this app should appear on the launcher home page.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl RankingEntry {
@@ -21,6 +24,7 @@ impl RankingEntry {
         Self {
             count: 1,
             last_used: now(),
+            pinned: false,
         }
     }
 
@@ -72,6 +76,7 @@ pub fn load_rankings(path: &Path) -> HashMap<String, RankingEntry> {
                             RankingEntry {
                                 count: v,
                                 last_used: now(),
+                                pinned: false,
                             },
                         )
                     })
@@ -115,4 +120,51 @@ pub fn get_score(path: &Path, key: &str) -> i32 {
         .get(key)
         .map(|e| e.frecency_score())
         .unwrap_or(0)
+}
+
+/// Persist an app's home-page pin without changing its usage ranking.
+pub fn set_pinned(path: &Path, key: &str, pinned: bool) -> Result<(), Error> {
+    let mut rankings = load_rankings(path);
+    rankings
+        .entry(key.to_string())
+        .and_modify(|entry| entry.pinned = pinned)
+        .or_insert_with(|| RankingEntry {
+            count: 0,
+            last_used: now(),
+            pinned,
+        });
+    save_rankings(path, &rankings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structured_entries_without_pinned_remain_unpinned() {
+        let file: RankingFile = toml::from_str(
+            r#"
+[rankings."/Applications/Test.app"]
+count = 3
+last_used = 123
+"#,
+        )
+        .unwrap();
+        assert!(!file.rankings["/Applications/Test.app"].pinned);
+    }
+
+    #[test]
+    fn pinned_state_does_not_increase_usage() {
+        let path = std::env::temp_dir().join(format!(
+            "ainto-ranking-pin-{}.toml",
+            uuid::Uuid::new_v4()
+        ));
+        set_pinned(&path, "/Applications/Test.app", true).unwrap();
+        let entry = load_rankings(&path)
+            .remove("/Applications/Test.app")
+            .unwrap();
+        assert!(entry.pinned);
+        assert_eq!(entry.count, 0);
+        let _ = std::fs::remove_file(path);
+    }
 }

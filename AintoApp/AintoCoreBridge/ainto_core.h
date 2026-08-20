@@ -33,6 +33,12 @@ const char* rc_get_all_apps(void);
 /// Get top-ranked (most used) apps, returns JSON array string
 const char* rc_get_top_apps(uint64_t limit);
 
+/// Get pinned home-page apps, ordered by frecency then name.
+const char* rc_get_pinned_apps(uint64_t limit);
+
+/// Set an app's pinned state. Returns 0 on success or -2 at the eight-app limit.
+int32_t rc_set_app_pinned(const char* app_path, bool pinned);
+
 /// Increment ranking for any key (app path or "cmd:name"), returns new value
 int32_t rc_increment_ranking(const char* key);
 

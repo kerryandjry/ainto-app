@@ -533,6 +533,7 @@ final class SearchViewModel: ObservableObject {
                     let path = entry["path"] as? String ?? ""
                     let bundleID = entry["bundle_id"] as? String
                     let ranking = entry["ranking"] as? Int ?? 0
+                    let isPinned = entry["is_favourite"] as? Bool ?? false
                     let icon = self.loadAppIcon(path: path)
                     var result = SearchResult(
                         title: name,
@@ -545,7 +546,7 @@ final class SearchViewModel: ObservableObject {
                         NSWorkspace.shared.open(URL(fileURLWithPath: path))
                         rc_update_ranking(path)
                     }
-                    result.actions = Self.appActions(path: path)
+                    result.actions = self.appActions(path: path, isPinned: isPinned)
                     return result
                 }
             }
@@ -1099,10 +1100,25 @@ final class SearchViewModel: ObservableObject {
     }
 
     /// App-specific actions.
-    static func appActions(path: String) -> [ActionItem] {
+    func appActions(path: String, isPinned: Bool) -> [ActionItem] {
         [
             ActionItem(title: "Open Application", icon: "arrow.up.forward.app", shortcut: "↵") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                rc_update_ranking(path)
+            },
+            ActionItem(
+                title: isPinned ? "Unpin from Home" : "Pin to Home",
+                icon: isPinned ? "pin.slash" : "pin",
+                shortcut: nil,
+                keepPanel: true
+            ) { [weak self] in
+                let status = rc_set_app_pinned(path, !isPinned)
+                if status == -2 {
+                    self?.showPinnedAppsLimitAlert()
+                    return
+                }
+                guard status == 0 else { return }
+                self?.refreshResultsAfterPinChange()
             },
             ActionItem(title: "Show in Finder", icon: "folder", shortcut: nil) {
                 NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
@@ -1134,14 +1150,32 @@ final class SearchViewModel: ObservableObject {
         ]
     }
 
+    private func showPinnedAppsLimitAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Pinned Apps Limit Reached"
+        alert.informativeText = "Unpin an app before pinning another. The home page supports up to 8 pinned apps."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func refreshResultsAfterPinChange() {
+        if query.isEmpty {
+            results = buildDefaultResults()
+        } else {
+            performSearch(query: query)
+        }
+        selectedIndex = min(selectedIndex, max(0, results.count - 1))
+    }
+
     // MARK: - Default Results
 
     /// Build results shown when search query is empty.
     private func buildDefaultResults() -> [SearchResult] {
         var results: [SearchResult] = []
 
-        // Frequently used apps (top 5 by ranking)
-        if let cStr = rc_get_top_apps(5) {
+        // Only explicitly pinned apps appear on the home page.
+        if let cStr = rc_get_pinned_apps(8) {
             let jsonStr = String(cString: cStr)
             rc_free_string(cStr)
             if let data = jsonStr.data(using: .utf8),
@@ -1150,6 +1184,7 @@ final class SearchViewModel: ObservableObject {
                     let name = entry["display_name"] as? String ?? ""
                     let path = entry["path"] as? String ?? ""
                     let bundleID = entry["bundle_id"] as? String
+                    let isPinned = entry["is_favourite"] as? Bool ?? true
                     let icon = self.loadAppIcon(path: path)
                     var result = SearchResult(
                         title: name,
@@ -1161,7 +1196,7 @@ final class SearchViewModel: ObservableObject {
                         NSWorkspace.shared.open(URL(fileURLWithPath: path))
                         rc_update_ranking(path)
                     }
-                    result.actions = Self.appActions(path: path)
+                    result.actions = self.appActions(path: path, isPinned: isPinned)
                     results.append(result)
                 }
             }

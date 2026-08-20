@@ -87,6 +87,7 @@ impl AppIndex {
         for app in &mut self.apps {
             if let Some(entry) = rankings.get(&app.path) {
                 app.ranking = entry.frecency_score();
+                app.is_favourite = entry.pinned;
             }
         }
     }

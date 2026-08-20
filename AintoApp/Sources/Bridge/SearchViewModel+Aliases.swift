@@ -81,6 +81,7 @@ extension SearchViewModel {
 
         let name = entry["display_name"] as? String ?? ""
         let path = entry["path"] as? String ?? ""
+        let isPinned = entry["is_favourite"] as? Bool ?? false
         var result = SearchResult(
             title: name,
             subtitle: "Application",
@@ -91,7 +92,7 @@ extension SearchViewModel {
             NSWorkspace.shared.open(URL(fileURLWithPath: path))
             rc_update_ranking(path)
         }
-        result.actions = Self.appActions(path: path)
+        result.actions = appActions(path: path, isPinned: isPinned)
         return result
     }
 

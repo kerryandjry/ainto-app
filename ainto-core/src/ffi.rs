@@ -161,6 +161,7 @@ pub extern "C" fn rc_get_all_apps() -> *const c_char {
                         "path": app.path,
                         "bundle_id": app.bundle_id,
                         "ranking": app.ranking,
+                        "is_favourite": app.is_favourite,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -194,6 +195,40 @@ pub extern "C" fn rc_get_top_apps(limit: u64) -> *const c_char {
     to_c_string(&json)
 }
 
+/// Return pinned apps ordered by frecency, then by display name.
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_get_pinned_apps(limit: u64) -> *const c_char {
+    let guard = APP_INDEX.lock().ok();
+    let results = guard
+        .as_ref()
+        .and_then(|opt| opt.as_ref())
+        .map(|index| {
+            let mut apps = index.get_favourites();
+            apps.sort_by(|first, second| {
+                second.ranking.cmp(&first.ranking).then_with(|| {
+                    first
+                        .display_name
+                        .to_lowercase()
+                        .cmp(&second.display_name.to_lowercase())
+                })
+            });
+            apps.truncate(limit as usize);
+            apps.into_iter()
+                .map(|app| {
+                    serde_json::json!({
+                        "display_name": app.display_name,
+                        "path": app.path,
+                        "bundle_id": app.bundle_id,
+                        "ranking": app.ranking,
+                        "is_favourite": true,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    to_c_string(&serde_json::to_string(&results).unwrap_or_else(|_| "[]".into()))
+}
+
 /// Increment ranking for any key (app path or "cmd:name") and persist.
 /// Returns the new frecency score.
 #[unsafe(no_mangle)]
@@ -221,6 +256,47 @@ pub extern "C" fn rc_get_ranking(key: *const c_char) -> i32 {
     let Ok(cfg_dir) = config::config_dir() else { return 0 };
     let path = cfg_dir.join("ranking.toml");
     crate::ranking::get_score(&path, &k)
+}
+
+/// Set an app's persisted home-page pin.
+/// Returns 0 on success, -2 when the eight-app limit is reached.
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_set_app_pinned(app_path: *const c_char, pinned: bool) -> i32 {
+    let Some(key) = from_c_str(app_path) else {
+        return -1;
+    };
+    if pinned {
+        let at_limit = APP_INDEX
+            .lock()
+            .ok()
+            .and_then(|index| {
+                index.as_ref().map(|index| {
+                    let target_is_pinned = index
+                        .apps()
+                        .iter()
+                        .any(|app| app.path == key && app.is_favourite);
+                    !target_is_pinned && index.get_favourites().len() >= 8
+                })
+            })
+            .unwrap_or(false);
+        if at_limit {
+            return -2;
+        }
+    }
+    let Ok(cfg_dir) = config::config_dir() else {
+        return -1;
+    };
+    if crate::ranking::set_pinned(&cfg_dir.join("ranking.toml"), &key, pinned).is_err() {
+        return -1;
+    }
+    if let Ok(mut index) = APP_INDEX.lock() {
+        if let Some(index) = index.as_mut() {
+            if let Some(app) = index.apps_mut().iter_mut().find(|app| app.path == key) {
+                app.is_favourite = pinned;
+            }
+        }
+    }
+    0
 }
 
 #[unsafe(no_mangle)]
