@@ -1,3 +1,4 @@
+// swiftlint:disable type_body_length function_body_length cyclomatic_complexity identifier_name
 import AppKit
 import SwiftUI
 
@@ -147,33 +148,37 @@ final class SearchPanel: NSPanel {
 
     /// Hide panel, activate previous app, simulate Cmd+C to grab selection, then call back.
     func grabSelectionFromPreviousApp(completion: @escaping (String) -> Void) {
-        let pasteboard = NSPasteboard.general
-        let previousContent = pasteboard.string(forType: .string)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await PasteboardAccess.acquireExclusiveAccess()
 
-        // Hide panel and activate previous app
-        hidePanel()
-        previousApp?.activate()
-
-        // Wait for app activation, then simulate Cmd+C
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            pasteboard.clearContents()
-            self.simulateCopy()
-
-            // Wait for clipboard to update
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                let selection = pasteboard.string(forType: .string) ?? ""
-
-                // Restore previous clipboard content
-                pasteboard.clearContents()
-                if let prev = previousContent {
-                    pasteboard.setString(prev, forType: .string)
-                    pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
-                }
-
-                // Re-show panel and call back
-                self.makeKeyAndOrderFront(nil)
-                completion(selection)
+            let pasteboard = NSPasteboard.general
+            guard let previousItems = PasteboardAccess.snapshotItems(from: pasteboard) else {
+                PasteboardAccess.endExclusiveAccess()
+                completion("")
+                return
             }
+
+            hidePanel()
+            previousApp?.activate()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+
+            pasteboard.clearContents()
+            simulateCopy()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            let selection = pasteboard.string(forType: .string) ?? ""
+
+            PasteboardAccess.restore(previousItems, to: pasteboard)
+            if !previousItems.isEmpty {
+                pasteboard.setData(
+                    Data(),
+                    forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+                )
+            }
+            PasteboardAccess.endExclusiveAccess()
+
+            makeKeyAndOrderFront(nil)
+            completion(selection)
         }
     }
 

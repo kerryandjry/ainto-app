@@ -1,3 +1,4 @@
+// swiftlint:disable file_length type_body_length function_body_length identifier_name
 import AppKit
 import Foundation
 import AintoCore
@@ -783,25 +784,26 @@ final class SearchViewModel: ObservableObject {
         guard clipboardSelectedIndex < items.count else { return }
         let item = items[clipboardSelectedIndex]
 
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
+        PasteboardAccess.withPasteboard { pasteboard in
+            pasteboard.clearContents()
 
-        switch item.contentType {
-        case "text":
-            if let text = item.text {
-                pasteboard.setString(text, forType: .string)
+            switch item.contentType {
+            case "text":
+                if let text = item.text {
+                    pasteboard.setString(text, forType: .string)
+                }
+            case "file":
+                if let path = item.filePath {
+                    let url = URL(fileURLWithPath: path) as NSURL
+                    pasteboard.writeObjects([url])
+                }
+            case "image":
+                if let path = item.imagePath, let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
+                    pasteboard.setData(data, forType: .png)
+                }
+            default:
+                break
             }
-        case "file":
-            if let path = item.filePath {
-                let url = URL(fileURLWithPath: path) as NSURL
-                pasteboard.writeObjects([url])
-            }
-        case "image":
-            if let path = item.imagePath, let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
-                pasteboard.setData(data, forType: .png)
-            }
-        default:
-            break
         }
 
         // Hide panel and paste into the previously focused app
@@ -907,12 +909,16 @@ final class SearchViewModel: ObservableObject {
     /// Expand a snippet's placeholders, put the result on the pasteboard,
     /// and paste it into the frontmost app.
     private func expandAndPasteSnippet(_ expansion: String) {
-        let clipboardText = NSPasteboard.general.string(forType: .string)
+        let clipboardText = PasteboardAccess.withPasteboard { pasteboard in
+            pasteboard.string(forType: .string)
+        }
         guard let cStr = rc_snippet_expand(expansion, clipboardText) else { return }
         let expanded = String(cString: cStr)
         rc_free_string(cStr)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(expanded, forType: .string)
+        PasteboardAccess.withPasteboard { pasteboard in
+            pasteboard.clearContents()
+            pasteboard.setString(expanded, forType: .string)
+        }
         onPasteAndHide?()
     }
 
@@ -1077,13 +1083,17 @@ final class SearchViewModel: ObservableObject {
                 }
             },
             ActionItem(title: "Copy Path", icon: "doc.on.doc", shortcut: nil) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(path, forType: .string)
+                PasteboardAccess.withPasteboard { pasteboard in
+                    pasteboard.clearContents()
+                    pasteboard.setString(path, forType: .string)
+                }
             },
             ActionItem(title: "Copy Bundle ID", icon: "number", shortcut: nil) {
                 if let bundle = Bundle(path: path), let id = bundle.bundleIdentifier {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(id, forType: .string)
+                    PasteboardAccess.withPasteboard { pasteboard in
+                        pasteboard.clearContents()
+                        pasteboard.setString(id, forType: .string)
+                    }
                 }
             },
         ]
@@ -1307,8 +1317,10 @@ final class SearchViewModel: ObservableObject {
               !lastResponse.text.isEmpty else { return }
 
         // Write response to clipboard
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lastResponse.text, forType: .string)
+        PasteboardAccess.withPasteboard { pasteboard in
+            pasteboard.clearContents()
+            pasteboard.setString(lastResponse.text, forType: .string)
+        }
 
         // Hide panel and paste into previous app
         onPasteAndHide?()
@@ -1316,8 +1328,10 @@ final class SearchViewModel: ObservableObject {
 
     func claudeCopyLastResponse() {
         if let last = claudeMessages.last(where: { $0.role == .assistant }) {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(last.text, forType: .string)
+            PasteboardAccess.withPasteboard { pasteboard in
+                pasteboard.clearContents()
+                pasteboard.setString(last.text, forType: .string)
+            }
         }
     }
 
