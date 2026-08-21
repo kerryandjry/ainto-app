@@ -82,10 +82,29 @@ pub fn resolve_placeholders(text: &str, clipboard_text: Option<&str>) -> String 
     let date_str = format!("{year:04}-{month:02}-{day:02}");
     let time_str = format!("{hour:02}:{min:02}:{sec:02}");
 
-    text.replace("{date}", &date_str)
+    let resolved = text
+        .replace("{date}", &date_str)
         .replace("{time}", &time_str)
-        .replace("{clipboard}", clipboard_text.unwrap_or(""))
-        .replace("{uuid}", &uuid::Uuid::new_v4().to_string())
+        .replace("{clipboard}", clipboard_text.unwrap_or(""));
+
+    replace_each_uuid(&resolved)
+}
+
+/// Replace every `{uuid}` with its *own* value.
+///
+/// `str::replace` substitutes one value everywhere, which made two `{uuid}`
+/// placeholders in the same snippet expand to the same id.
+fn replace_each_uuid(text: &str) -> String {
+    const PLACEHOLDER: &str = "{uuid}";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find(PLACEHOLDER) {
+        out.push_str(&rest[..pos]);
+        out.push_str(&uuid::Uuid::new_v4().to_string());
+        rest = &rest[pos + PLACEHOLDER.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Convert a Unix timestamp to local date/time without adding a date-time crate.
@@ -192,6 +211,21 @@ mod tests {
         assert!(time.as_bytes()[2] == b':' && time.as_bytes()[5] == b':');
         assert_eq!(uuid.len(), 36);
         assert_eq!(uuid.chars().filter(|c| *c == '-').count(), 4);
+    }
+
+    #[test]
+    fn each_uuid_placeholder_gets_its_own_value() {
+        let result = resolve_placeholders("{uuid} {uuid}", None);
+        let ids: Vec<&str> = result.split(' ').collect();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0].len(), 36);
+        assert_eq!(ids[1].len(), 36);
+        assert_ne!(ids[0], ids[1], "two placeholders must not share one id");
+    }
+
+    #[test]
+    fn text_without_uuid_is_untouched() {
+        assert_eq!(resolve_placeholders("plain text", None), "plain text");
     }
 
     #[test]
