@@ -1,3 +1,4 @@
+// swiftlint:disable type_body_length function_body_length cyclomatic_complexity identifier_name file_length
 import AppKit
 import SwiftUI
 
@@ -72,16 +73,23 @@ final class SearchPanel: NSPanel {
         viewModel.onGrabSelection = { [weak self] completion in
             self?.grabSelectionFromPreviousApp(completion: completion)
         }
+        viewModel.fileSearch.onOpen = { [weak self] in self?.hidePanel() }
+        viewModel.onSystemActionCompleted = { [weak self] in self?.hidePanel() }
 
         viewModel.loadAISettings()
     }
 
-    /// Whether the user has ever positioned the panel manually.
-    private var hasUserPosition = false
+    /// Display used on the previous presentation. Moving within the same display
+    /// is preserved, while invoking from another display follows the mouse.
+    private var lastPresentedScreenFrame: NSRect?
 
     func showPanel() {
-        // Remember the currently focused app before showing
-        previousApp = NSWorkspace.shared.frontmostApplication
+        // Alias editing activates Ainto. Preserve the last external app so
+        // actions still return to the user's actual target application.
+        if let frontmost = NSWorkspace.shared.frontmostApplication,
+           frontmost.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousApp = frontmost
+        }
 
         // Pick up any Settings change to the AI master switch.
         viewModel.loadAISettings()
@@ -91,19 +99,7 @@ final class SearchPanel: NSPanel {
         viewModel.loadSnippets()
         viewModel.loadAICommands()
 
-        if !hasUserPosition {
-            let screen = NSScreen.screens.first(where: {
-                NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
-            }) ?? NSScreen.main ?? NSScreen.screens.first
-
-            if let screen {
-                let screenFrame = screen.visibleFrame
-                let x = screenFrame.midX - frame.width / 2
-                let y = screenFrame.maxY - (screenFrame.height * 0.25)
-                setFrameOrigin(NSPoint(x: x, y: y))
-            }
-            hasUserPosition = true
-        }
+        positionOnMouseScreenIfNeeded()
 
         // Do NOT call NSApp.activate — keep the previous app focused
         makeKeyAndOrderFront(nil)
@@ -114,7 +110,49 @@ final class SearchPanel: NSPanel {
 
     func hidePanel() {
         hideActionPanel()
+        viewModel.prepareForPanelHide()
+        // If the user dragged the panel, remember the display it actually
+        // occupied so the next invocation can still follow the mouse.
+        if let screen {
+            lastPresentedScreenFrame = screen.frame
+        }
         orderOut(nil)
+    }
+
+    private func positionOnMouseScreenIfNeeded() {
+        let mouseLocation = NSEvent.mouseLocation
+        guard let targetScreen = NSScreen.screens.first(where: {
+            NSMouseInRect(mouseLocation, $0.frame, false)
+        }) ?? NSScreen.main ?? NSScreen.screens.first else { return }
+
+        let targetChanged = lastPresentedScreenFrame != targetScreen.frame
+        let panelIsOnTarget = screen?.frame == targetScreen.frame
+        guard lastPresentedScreenFrame == nil || targetChanged || !panelIsOnTarget else { return }
+
+        let visibleFrame = targetScreen.visibleFrame
+        let proposedX = visibleFrame.midX - frame.width / 2
+        // Place the panel's center roughly one quarter down from the top.
+        let proposedY = visibleFrame.maxY - visibleFrame.height * 0.25 - frame.height / 2
+        let maxX = max(visibleFrame.minX, visibleFrame.maxX - frame.width)
+        let maxY = max(visibleFrame.minY, visibleFrame.maxY - frame.height)
+        let x = min(max(proposedX, visibleFrame.minX), maxX)
+        let y = min(max(proposedY, visibleFrame.minY), maxY)
+        setFrameOrigin(NSPoint(x: x, y: y))
+        lastPresentedScreenFrame = targetScreen.frame
+    }
+
+    /// Invoke a saved target shortcut using the same behavior as selecting it in search.
+    func invokeShortcut(_ target: LauncherTargetRef) {
+        showPanel()
+        guard viewModel.invokeShortcutTarget(target) else {
+            hidePanel()
+            return
+        }
+        // Navigation and confirmation targets change the page and remain visible.
+        // Immediate targets (apps, snippets, and safe system actions) close the panel.
+        if viewModel.page == .main {
+            hidePanel()
+        }
     }
 
     /// Hide panel, re-activate the previous app, and simulate Cmd+V to paste.
@@ -146,34 +184,56 @@ final class SearchPanel: NSPanel {
     }
 
     /// Hide panel, activate previous app, simulate Cmd+C to grab selection, then call back.
-    func grabSelectionFromPreviousApp(completion: @escaping (String) -> Void) {
-        let pasteboard = NSPasteboard.general
-        let previousContent = pasteboard.string(forType: .string)
+    func grabSelectionFromPreviousApp(completion: @MainActor @escaping (SelectionCaptureResult) -> Void) {
+        guard AXIsProcessTrusted() else {
+            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
+            let message = "Ainto needs Accessibility permission to read selected text. "
+                + "Enable Ainto in System Settings → Privacy & Security → Accessibility, then try again."
+            completion(.failure(message))
+            return
+        }
+        guard let previousApp else {
+            completion(.failure("Ainto could not identify the app containing the selected text."))
+            return
+        }
 
-        // Hide panel and activate previous app
-        hidePanel()
-        previousApp?.activate()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let pasteboard = NSPasteboard.general
+            let previousContent = pasteboard.string(forType: .string)
 
-        // Wait for app activation, then simulate Cmd+C
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            hidePanel()
+            previousApp.activate()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+
             pasteboard.clearContents()
-            self.simulateCopy()
+            let clearedChangeCount = pasteboard.changeCount
+            simulateCopy()
 
-            // Wait for clipboard to update
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                let selection = pasteboard.string(forType: .string) ?? ""
-
-                // Restore previous clipboard content
-                pasteboard.clearContents()
-                if let prev = previousContent {
-                    pasteboard.setString(prev, forType: .string)
-                    pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
+            // Some applications update the pasteboard asynchronously. Poll for
+            // at most one second instead of assuming 150 ms is always enough.
+            var selection = ""
+            for _ in 0..<20 {
+                if pasteboard.changeCount != clearedChangeCount,
+                   let copiedText = pasteboard.string(forType: .string) {
+                    selection = copiedText
+                    break
                 }
-
-                // Re-show panel and call back
-                self.makeKeyAndOrderFront(nil)
-                completion(selection)
+                try? await Task.sleep(nanoseconds: 50_000_000)
             }
+
+            pasteboard.clearContents()
+            if let previousContent {
+                pasteboard.setString(previousContent, forType: .string)
+                pasteboard.setData(
+                    Data(),
+                    forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+                )
+            }
+
+            makeKeyAndOrderFront(nil)
+            completion(.success(selection))
         }
     }
 
@@ -195,8 +255,7 @@ final class SearchPanel: NSPanel {
         guard !actions.isEmpty else { return }
         actionSelectedIndex = 0
 
-        let title = viewModel.results.indices.contains(viewModel.selectedIndex)
-            ? viewModel.results[viewModel.selectedIndex].title : ""
+        let title = viewModel.currentActionTitle
 
         let panelView = ActionPanelView(
             title: title,
@@ -240,8 +299,7 @@ final class SearchPanel: NSPanel {
     func updateActionPanelSelection() {
         guard let window = actionWindow else { return }
         let actions = viewModel.currentActions
-        let title = viewModel.results.indices.contains(viewModel.selectedIndex)
-            ? viewModel.results[viewModel.selectedIndex].title : ""
+        let title = viewModel.currentActionTitle
 
         let panelView = ActionPanelView(
             title: title,
@@ -348,6 +406,12 @@ final class SearchPanel: NSPanel {
                     self.viewModel.saveEditingAICommand()
                     return nil
                 }
+                if self.viewModel.page == .main,
+                   self.viewModel.results.indices.contains(self.viewModel.selectedIndex),
+                   let alternateAction = self.viewModel.results[self.viewModel.selectedIndex].alternateAction {
+                    alternateAction()
+                    return nil
+                }
             }
 
             // Cmd+C in Claude page — copy last response
@@ -447,8 +511,11 @@ final class SearchPanel: NSPanel {
                     self.viewModel.claudeAsk()
                     return nil
                 }
+                let keepPanelOpen = self.viewModel.page == .main
+                    && self.viewModel.results.indices.contains(self.viewModel.selectedIndex)
+                    && self.viewModel.results[self.viewModel.selectedIndex].keepsPanelOpenAfterAction
                 self.viewModel.openSelected()
-                if self.viewModel.page == .main {
+                if self.viewModel.page == .main && !keepPanelOpen {
                     self.hidePanel()
                 }
                 return nil

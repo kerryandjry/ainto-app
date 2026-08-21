@@ -3,6 +3,8 @@
 //! This crate compiles to a static library (.a) linked into the Swift frontend via C ABI FFI.
 
 pub mod ai_commands;
+pub mod aliases;
+pub mod calculator;
 pub mod clipboard_store;
 pub mod claude;
 pub mod config;
@@ -38,4 +40,7 @@ pub enum Error {
 
     #[error("Claude spawn error: {0}")]
     ClaudeSpawn(String),
+
+    #[error("Invalid aliases: {0}")]
+    InvalidAliases(String),
 }

@@ -7,12 +7,14 @@ import Sparkle
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var searchPanel: SearchPanel?
     private var hotkeyManager: HotkeyManager?
+    private var aliasHotkeyManager: AliasHotkeyManager?
     private var clipboardMonitor: ClipboardMonitor?
     private var textExpander: TextExpander?
     private var trayManager: TrayManager?
     private var settingsWindow: NSWindow?
     /// Live config-file watchers, keyed by file name.
     private var configWatchers: [String: DispatchSourceFileSystemObject] = [:]
+    private var shortcutResumeWorkItem: DispatchWorkItem?
 
     private var updaterController: SPUStandardUpdaterController?
 
@@ -54,6 +56,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager = HotkeyManager { [weak self] in
             self?.toggleSearchPanel()
         }
+        aliasHotkeyManager = AliasHotkeyManager { [weak self] target in
+            self?.searchPanel?.invokeShortcut(target)
+        }
+        hotkeyManager?.onHotkeyChanged = { [weak self] in
+            self?.aliasHotkeyManager?.reload()
+        }
         // Spotlight/Raycast conflict warnings are handled in SettingsView
 
         // Start clipboard monitoring
@@ -72,11 +80,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.openSettings()
         })
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(aliasesDidChange),
+            name: .aliasesDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(shortcutRecordingDidBegin),
+            name: .shortcutRecordingDidBegin,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(shortcutRecordingDidEnd),
+            name: .shortcutRecordingDidEnd,
+            object: nil
+        )
+
         // Watch ~/.config/ainto/ for external file changes (e.g. manual TOML edits)
         watchConfigDirectory()
     }
 
-    private static let watchedConfigFiles = ["snippets.toml", "ai-commands.toml", "config.toml"]
+    private static let watchedConfigFiles = [
+        "snippets.toml", "ai-commands.toml", "aliases.toml", "config.toml",
+    ]
 
     /// Delay before re-opening a config file that is missing or was replaced.
     /// An atomic save briefly leaves no file at the path, so retry rather than
@@ -139,11 +168,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Covers both the Settings toggle (saved via rc_config_save)
             // and manual TOML edits.
             applySnippetsEnabled()
+        } else if name == "aliases.toml" {
+            searchPanel?.viewModel.reloadAliases()
+            aliasHotkeyManager?.reload()
         } else {
             searchPanel?.viewModel.loadSnippets()
             searchPanel?.viewModel.loadAICommands()
             textExpander?.reloadSnippets()
         }
+    }
+
+    @objc private func aliasesDidChange() {
+        searchPanel?.viewModel.reloadAliases()
+        aliasHotkeyManager?.reload()
+    }
+
+    @objc private func shortcutRecordingDidBegin() {
+        shortcutResumeWorkItem?.cancel()
+        shortcutResumeWorkItem = nil
+        hotkeyManager?.suspend()
+        aliasHotkeyManager?.suspend()
+    }
+
+    @objc private func shortcutRecordingDidEnd() {
+        // Wait until the recorded physical key is released. Registering a key-up
+        // handler immediately can execute an existing shortcut while editing it.
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.hotkeyManager?.resume()
+            self?.aliasHotkeyManager?.resume()
+            self?.shortcutResumeWorkItem = nil
+        }
+        shortcutResumeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -4,7 +4,7 @@
 //! Score = count * 10 * decay, where decay decreases over days since last use.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,9 @@ use crate::Error;
 pub struct RankingEntry {
     pub count: i32,
     pub last_used: i64, // unix timestamp
+    /// Whether this app should appear on the launcher home page.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl Default for RankingEntry {
@@ -29,6 +32,7 @@ impl RankingEntry {
         Self {
             count: 1,
             last_used: now(),
+            pinned: false,
         }
     }
 
@@ -80,6 +84,7 @@ pub fn load_rankings(path: &Path) -> HashMap<String, RankingEntry> {
                             RankingEntry {
                                 count: v,
                                 last_used: now(),
+                                pinned: false,
                             },
                         )
                     })
@@ -113,15 +118,18 @@ pub fn save_rankings(path: &Path, rankings: &HashMap<String, RankingEntry>) -> R
 /// cost a file read per lookup. The file is only ever written through
 /// `increment_and_save`, so the cache stays authoritative for this process.
 ///
-/// Assumes a single ranking file per process (always `<config_dir>/ranking.toml`);
-/// the first path passed in wins.
-static CACHE: Mutex<Option<HashMap<String, RankingEntry>>> = Mutex::new(None);
+/// Production uses one ranking path, while path-aware storage keeps tests and
+/// callers with temporary config roots isolated from one another.
+static CACHE: Mutex<Option<(PathBuf, HashMap<String, RankingEntry>)>> = Mutex::new(None);
 
-/// Run `f` against the cached ranking table, loading it from disk on first use.
+/// Run `f` against the cached ranking table, loading it when the path changes.
 fn with_cache<T>(path: &Path, f: impl FnOnce(&mut HashMap<String, RankingEntry>) -> T) -> T {
-    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let rankings = guard.get_or_insert_with(|| load_rankings(path));
-    f(rankings)
+    let mut guard = CACHE.lock().unwrap_or_else(|error| error.into_inner());
+    let cache = guard.get_or_insert_with(|| (path.to_path_buf(), load_rankings(path)));
+    if cache.0 != path {
+        *cache = (path.to_path_buf(), load_rankings(path));
+    }
+    f(&mut cache.1)
 }
 
 /// Snapshot of the current ranking table.
@@ -129,16 +137,32 @@ pub fn all_rankings(path: &Path) -> HashMap<String, RankingEntry> {
     with_cache(path, |rankings| rankings.clone())
 }
 
-/// Remove persisted rankings and clear the process-wide cache atomically.
+/// Clear usage rankings while preserving explicit Home pins.
 pub fn reset(path: &Path) -> Result<(), Error> {
-    let mut guard = CACHE.lock().unwrap_or_else(|error| error.into_inner());
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    *guard = Some(HashMap::new());
-    Ok(())
+    with_cache(path, |rankings| {
+        let mut reset_rankings = rankings.clone();
+        reset_rankings.retain(|_, entry| {
+            if entry.pinned {
+                entry.count = 0;
+                entry.last_used = now();
+                true
+            } else {
+                false
+            }
+        });
+
+        if reset_rankings.is_empty() {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            save_rankings(path, &reset_rankings)?;
+        }
+        *rankings = reset_rankings;
+        Ok(())
+    })
 }
 
 /// Increment a key and save. Returns the new frecency score.
@@ -158,6 +182,21 @@ pub fn increment_and_save(path: &Path, key: &str) -> i32 {
 pub fn get_score(path: &Path, key: &str) -> i32 {
     with_cache(path, |rankings| {
         rankings.get(key).map(|e| e.frecency_score()).unwrap_or(0)
+    })
+}
+
+/// Persist an app's home-page pin without changing its usage ranking.
+pub fn set_pinned(path: &Path, key: &str, pinned: bool) -> Result<(), Error> {
+    with_cache(path, |rankings| {
+        rankings
+            .entry(key.to_string())
+            .and_modify(|entry| entry.pinned = pinned)
+            .or_insert_with(|| RankingEntry {
+                count: 0,
+                last_used: now(),
+                pinned,
+            });
+        save_rankings(path, rankings)
     })
 }
 
@@ -181,5 +220,48 @@ mod tests {
         assert_eq!(get_score(&path, "app:test"), 0);
         assert!(!path.exists());
         std::fs::remove_dir_all(directory).ok();
+    }
+
+    #[test]
+    fn structured_entries_without_pinned_remain_unpinned() {
+        let file: RankingFile = toml::from_str(
+            r#"
+[rankings."/Applications/Test.app"]
+count = 3
+last_used = 123
+"#,
+        )
+        .unwrap();
+        assert!(!file.rankings["/Applications/Test.app"].pinned);
+    }
+
+    #[test]
+    fn pinned_state_does_not_increase_usage() {
+        let path =
+            std::env::temp_dir().join(format!("ainto-ranking-pin-{}.toml", uuid::Uuid::new_v4()));
+        set_pinned(&path, "/Applications/Test.app", true).unwrap();
+        let entry = load_rankings(&path)
+            .remove("/Applications/Test.app")
+            .unwrap();
+        assert!(entry.pinned);
+        assert_eq!(entry.count, 0);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reset_preserves_pins_while_clearing_usage() {
+        let path =
+            std::env::temp_dir().join(format!("ainto-ranking-reset-{}.toml", uuid::Uuid::new_v4()));
+        let app = "/Applications/Test.app";
+
+        set_pinned(&path, app, true).unwrap();
+        assert!(increment_and_save(&path, app) > 0);
+        reset(&path).unwrap();
+
+        let entry = load_rankings(&path).remove(app).unwrap();
+        assert!(entry.pinned);
+        assert_eq!(entry.count, 0);
+        assert_eq!(get_score(&path, app), 0);
+        let _ = std::fs::remove_file(path);
     }
 }

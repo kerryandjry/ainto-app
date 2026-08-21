@@ -8,7 +8,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::Mutex;
 
-use crate::{clipboard_store, config, discovery, search, snippets};
+use crate::{aliases, calculator, clipboard_store, config, discovery, search, snippets};
 
 // ============================================================
 // Global State
@@ -27,7 +27,10 @@ fn from_c_str(s: *const c_char) -> Option<String> {
     if s.is_null() {
         return None;
     }
-    unsafe { CStr::from_ptr(s) }.to_str().ok().map(|s| s.to_string())
+    unsafe { CStr::from_ptr(s) }
+        .to_str()
+        .ok()
+        .map(|s| s.to_string())
 }
 
 // ============================================================
@@ -76,6 +79,32 @@ pub extern "C" fn rc_config_save(json: *const c_char) -> i32 {
 }
 
 // ============================================================
+// Calculator
+// ============================================================
+
+/// Evaluate a safe arithmetic expression and write the result to `out_result`.
+///
+/// # Safety
+/// `expression` must point to a valid NUL-terminated UTF-8 string and
+/// `out_result` must be valid for one `f64` write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_calculate(expression: *const c_char, out_result: *mut f64) -> bool {
+    let Some(expression) = from_c_str(expression) else {
+        return false;
+    };
+    if out_result.is_null() {
+        return false;
+    }
+    let Ok(result) = calculator::calculate(&expression) else {
+        return false;
+    };
+    unsafe {
+        *out_result = result;
+    }
+    true
+}
+
+// ============================================================
 // App Discovery & Search
 // ============================================================
 
@@ -91,6 +120,7 @@ pub extern "C" fn rc_discover_apps(store_icons: bool) -> *const c_char {
                 "display_name": a.display_name,
                 "search_name": a.search_name,
                 "path": a.path,
+                "bundle_id": a.bundle_id,
                 "has_icon": a.icon_png.is_some(),
                 "ranking": a.ranking,
                 "is_favourite": a.is_favourite,
@@ -132,6 +162,7 @@ pub extern "C" fn rc_search_apps(query: *const c_char) -> *const c_char {
                     serde_json::json!({
                         "display_name": a.display_name,
                         "path": a.path,
+                        "bundle_id": a.bundle_id,
                         "ranking": a.ranking,
                         "is_favourite": a.is_favourite,
                     })
@@ -142,6 +173,30 @@ pub extern "C" fn rc_search_apps(query: *const c_char) -> *const c_char {
 
     let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
     to_c_string(&json)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_get_all_apps() -> *const c_char {
+    let guard = APP_INDEX.lock().ok();
+    let results = guard
+        .as_ref()
+        .and_then(|opt| opt.as_ref())
+        .map(|idx| {
+            idx.apps()
+                .iter()
+                .map(|app| {
+                    serde_json::json!({
+                        "display_name": app.display_name,
+                        "path": app.path,
+                        "bundle_id": app.bundle_id,
+                        "ranking": app.ranking,
+                        "is_favourite": app.is_favourite,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    to_c_string(&serde_json::to_string(&results).unwrap_or_else(|_| "[]".into()))
 }
 
 #[unsafe(no_mangle)]
@@ -157,6 +212,7 @@ pub extern "C" fn rc_get_top_apps(limit: u64) -> *const c_char {
                     serde_json::json!({
                         "display_name": a.display_name,
                         "path": a.path,
+                        "bundle_id": a.bundle_id,
                         "ranking": a.ranking,
                     })
                 })
@@ -168,17 +224,53 @@ pub extern "C" fn rc_get_top_apps(limit: u64) -> *const c_char {
     to_c_string(&json)
 }
 
+/// Return pinned apps ordered by frecency, then by display name.
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_get_pinned_apps(limit: u64) -> *const c_char {
+    let guard = APP_INDEX.lock().ok();
+    let results = guard
+        .as_ref()
+        .and_then(|opt| opt.as_ref())
+        .map(|index| {
+            let mut apps = index.get_favourites();
+            apps.sort_by(|first, second| {
+                second.ranking.cmp(&first.ranking).then_with(|| {
+                    first
+                        .display_name
+                        .to_lowercase()
+                        .cmp(&second.display_name.to_lowercase())
+                })
+            });
+            apps.truncate(limit as usize);
+            apps.into_iter()
+                .map(|app| {
+                    serde_json::json!({
+                        "display_name": app.display_name,
+                        "path": app.path,
+                        "bundle_id": app.bundle_id,
+                        "ranking": app.ranking,
+                        "is_favourite": true,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    to_c_string(&serde_json::to_string(&results).unwrap_or_else(|_| "[]".into()))
+}
+
 /// Increment ranking for any key (app path or "cmd:name") and persist.
 /// Returns the new frecency score.
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_increment_ranking(key: *const c_char) -> i32 {
     let Some(k) = from_c_str(key) else { return -1 };
-    let Ok(cfg_dir) = config::config_dir() else { return -1 };
+    let Ok(cfg_dir) = config::config_dir() else {
+        return -1;
+    };
     let path = cfg_dir.join("ranking.toml");
     let score = crate::ranking::increment_and_save(&path, &k);
 
     // Also update in-memory AppIndex if it's an app path
-    if !k.starts_with("cmd:") {
+    if !k.starts_with("cmd:") && !k.starts_with("cmd-id:") {
         if let Ok(mut idx) = APP_INDEX.lock() {
             if let Some(ref mut index) = *idx {
                 index.update_ranking(&k);
@@ -192,12 +284,14 @@ pub extern "C" fn rc_increment_ranking(key: *const c_char) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_get_ranking(key: *const c_char) -> i32 {
     let Some(k) = from_c_str(key) else { return 0 };
-    let Ok(cfg_dir) = config::config_dir() else { return 0 };
+    let Ok(cfg_dir) = config::config_dir() else {
+        return 0;
+    };
     let path = cfg_dir.join("ranking.toml");
     crate::ranking::get_score(&path, &k)
 }
 
-/// Clear persisted rankings together with every in-memory ranking value.
+/// Clear persisted usage rankings together with in-memory ranking values.
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_reset_rankings() -> i32 {
     let Ok(cfg_dir) = config::config_dir() else { return -1 };
@@ -206,9 +300,51 @@ pub extern "C" fn rc_reset_rankings() -> i32 {
         return -1;
     }
 
+    let rankings = crate::ranking::all_rankings(&path);
     if let Ok(mut idx) = APP_INDEX.lock() {
         if let Some(ref mut index) = *idx {
-            index.apply_rankings(&std::collections::HashMap::new());
+            index.apply_rankings(&rankings);
+        }
+    }
+    0
+}
+
+/// Set an app's persisted home-page pin.
+/// Returns 0 on success, -2 when the eight-app limit is reached.
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_set_app_pinned(app_path: *const c_char, pinned: bool) -> i32 {
+    let Some(key) = from_c_str(app_path) else {
+        return -1;
+    };
+    if pinned {
+        let at_limit = APP_INDEX
+            .lock()
+            .ok()
+            .and_then(|index| {
+                index.as_ref().map(|index| {
+                    let target_is_pinned = index
+                        .apps()
+                        .iter()
+                        .any(|app| app.path == key && app.is_favourite);
+                    !target_is_pinned && index.get_favourites().len() >= 8
+                })
+            })
+            .unwrap_or(false);
+        if at_limit {
+            return -2;
+        }
+    }
+    let Ok(cfg_dir) = config::config_dir() else {
+        return -1;
+    };
+    if crate::ranking::set_pinned(&cfg_dir.join("ranking.toml"), &key, pinned).is_err() {
+        return -1;
+    }
+    if let Ok(mut index) = APP_INDEX.lock() {
+        if let Some(index) = index.as_mut() {
+            if let Some(app) = index.apps_mut().iter_mut().find(|app| app.path == key) {
+                app.is_favourite = pinned;
+            }
         }
     }
     0
@@ -219,7 +355,9 @@ pub extern "C" fn rc_update_ranking(app_path: *const c_char) {
     let Some(key) = from_c_str(app_path) else {
         return;
     };
-    let Ok(cfg_dir) = config::config_dir() else { return };
+    let Ok(cfg_dir) = config::config_dir() else {
+        return;
+    };
     let path = cfg_dir.join("ranking.toml");
     let score = crate::ranking::increment_and_save(&path, &key);
 
@@ -278,10 +416,7 @@ pub extern "C" fn rc_clipboard_set_limits(max_text_items: u64, max_image_items: 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rc_clipboard_insert_text(
-    text: *const c_char,
-    source_app: *const c_char,
-) -> i64 {
+pub extern "C" fn rc_clipboard_insert_text(text: *const c_char, source_app: *const c_char) -> i64 {
     let Some(text_str) = from_c_str(text) else {
         return -1;
     };
@@ -340,10 +475,7 @@ pub unsafe extern "C" fn rc_clipboard_insert_image(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rc_clipboard_insert_file(
-    path: *const c_char,
-    source_app: *const c_char,
-) -> i64 {
+pub extern "C" fn rc_clipboard_insert_file(path: *const c_char, source_app: *const c_char) -> i64 {
     let Some(path_str) = from_c_str(path) else {
         return -1;
     };
@@ -534,6 +666,37 @@ pub extern "C" fn rc_snippet_expand(
     let clip = from_c_str(clipboard_text);
     let result = snippets::resolve_placeholders(&text, clip.as_deref());
     to_c_string(&result)
+}
+
+// ============================================================
+// Global Aliases
+// ============================================================
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_aliases_load() -> *const c_char {
+    let path = config::config_dir()
+        .map(|directory| directory.join("aliases.toml"))
+        .unwrap_or_default();
+    let entries = aliases::load_aliases(&path).unwrap_or_default();
+    to_c_string(&serde_json::to_string(&entries).unwrap_or_else(|_| "[]".into()))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rc_aliases_save(json: *const c_char) -> i32 {
+    let Some(json_str) = from_c_str(json) else {
+        return -1;
+    };
+    let Ok(entries) = serde_json::from_str::<Vec<aliases::AliasEntry>>(&json_str) else {
+        return -2;
+    };
+    let path = match config::config_dir() {
+        Ok(directory) => directory.join("aliases.toml"),
+        Err(_) => return -3,
+    };
+    match aliases::save_aliases(&path, &entries) {
+        Ok(()) => 0,
+        Err(_) => -4,
+    }
 }
 
 // ============================================================

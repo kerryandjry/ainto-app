@@ -17,6 +17,10 @@ struct MainView: View {
                 SnippetView(viewModel: viewModel)
             case .aiCommands:
                 AICommandView(viewModel: viewModel)
+            case .fileSearch:
+                FileSearchView(viewModel: viewModel, service: viewModel.fileSearch)
+            case .systemConfirmation:
+                SystemActionConfirmationView(viewModel: viewModel)
             case .claude:
                 ClaudeView(viewModel: viewModel)
             }
@@ -152,7 +156,19 @@ struct MainView: View {
                     if !viewModel.results.isEmpty && viewModel.searchMode == .apps {
                         KeyHint(keys: ["⌘", "K"], label: "actions")
                         KeyHint(keys: ["↑", "↓"], label: "navigate")
-                        KeyHint(keys: ["↵"], label: "open")
+                        if viewModel.results.indices.contains(viewModel.selectedIndex) {
+                            let selectedResult = viewModel.results[viewModel.selectedIndex]
+                            if selectedResult.instantAnswerIsPending {
+                                KeyHint(keys: ["…"], label: "fetching")
+                            } else if selectedResult.alternateAction != nil {
+                                KeyHint(keys: ["⌘", "↵"], label: "paste")
+                                KeyHint(keys: ["↵"], label: "copy")
+                            } else if selectedResult.instantAnswerID != nil {
+                                KeyHint(keys: ["↵"], label: "retry")
+                            } else {
+                                KeyHint(keys: ["↵"], label: "open")
+                            }
+                        }
                     }
                     if !viewModel.query.isEmpty {
                         KeyHint(keys: ["esc"], label: "clear")

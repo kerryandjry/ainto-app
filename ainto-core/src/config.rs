@@ -18,6 +18,19 @@ pub struct Config {
     /// Master switch for all AI-related features in the UI.
     /// When false, the launcher hides every AI surface.
     pub ai_enabled: bool,
+    /// Spotlight folders used by File Search. Empty values are ignored.
+    pub file_search_paths: Vec<String>,
+    /// Search the entire local Spotlight index instead of selected folders.
+    pub file_search_all_locations: bool,
+    /// Include hidden Spotlight results.
+    pub file_search_include_hidden: bool,
+    /// Items shown on the launcher home page when the query is empty.
+    pub home_clipboard_history: bool,
+    pub home_file_search: bool,
+    pub home_snippets: bool,
+    pub home_ai_commands: bool,
+    /// Stable AI Command UUIDs selected for Home. None preserves legacy top-four behavior.
+    pub home_ai_command_ids: Option<Vec<String>>,
 }
 
 impl Default for Config {
@@ -28,6 +41,16 @@ impl Default for Config {
             claude_binary: "claude".to_string(),
             snippets_enabled: true,
             ai_enabled: true,
+            file_search_paths: dirs::home_dir()
+                .map(|path| vec![path.to_string_lossy().into_owned()])
+                .unwrap_or_default(),
+            file_search_all_locations: false,
+            file_search_include_hidden: false,
+            home_clipboard_history: true,
+            home_file_search: true,
+            home_snippets: true,
+            home_ai_commands: true,
+            home_ai_command_ids: None,
         }
     }
 }
@@ -68,4 +91,63 @@ impl Config {
 pub fn config_dir() -> Result<PathBuf, Error> {
     let home = dirs::home_dir().ok_or(Error::NoHomeDir)?;
     Ok(home.join(".config").join("ainto"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_receives_file_search_defaults() {
+        let config: Config = toml::from_str(
+            r#"
+clipboard_max_items = 100
+clipboard_max_image_items = 25
+claude_binary = "claude"
+snippets_enabled = true
+ai_enabled = true
+"#,
+        )
+        .unwrap();
+
+        assert!(!config.file_search_all_locations);
+        assert!(!config.file_search_include_hidden);
+        assert_eq!(
+            config.file_search_paths,
+            Config::default().file_search_paths
+        );
+        assert!(config.home_clipboard_history);
+        assert!(config.home_file_search);
+        assert!(config.home_snippets);
+        assert!(config.home_ai_commands);
+        assert!(config.home_ai_command_ids.is_none());
+    }
+
+    #[test]
+    fn home_item_settings_round_trip() {
+        let config = Config {
+            home_clipboard_history: false,
+            home_file_search: true,
+            home_snippets: false,
+            home_ai_commands: true,
+            home_ai_command_ids: Some(vec!["command-one".into(), "command-two".into()]),
+            ..Config::default()
+        };
+        let encoded = toml::to_string(&config).unwrap();
+        let decoded: Config = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, config);
+    }
+
+    #[test]
+    fn file_search_settings_round_trip() {
+        let config = Config {
+            file_search_paths: vec!["/Users/example/Documents".into()],
+            file_search_all_locations: true,
+            file_search_include_hidden: true,
+            ..Config::default()
+        };
+        let encoded = toml::to_string(&config).unwrap();
+        let decoded: Config = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, config);
+    }
 }

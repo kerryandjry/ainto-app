@@ -2,6 +2,11 @@
 import AppKit
 import Carbon
 
+extension Notification.Name {
+    static let shortcutRecordingDidBegin = Notification.Name("app.ainto.shortcutRecordingDidBegin")
+    static let shortcutRecordingDidEnd = Notification.Name("app.ainto.shortcutRecordingDidEnd")
+}
+
 /// Hotkey configuration — maps display string to Key + Modifiers.
 struct HotkeyConfig: Sendable {
     let displayName: String
@@ -20,6 +25,13 @@ struct HotkeyConfig: Sendable {
     static func find(_ displayName: String) -> HotkeyConfig? {
         options.first { $0.displayName == displayName }
     }
+
+    static func isLauncherHotkey(_ hotkey: LauncherHotkey) -> Bool {
+        let saved = UserDefaults.standard.string(forKey: "globalHotkey") ?? "⌘ ⇧ Space"
+        guard let config = find(saved) else { return false }
+        return config.key.carbonKeyCode == hotkey.keyCode
+            && config.modifiers.carbonFlags == hotkey.modifiers
+    }
 }
 
 /// Manages global hotkey registration with dynamic switching.
@@ -31,6 +43,7 @@ final class HotkeyManager {
 
     /// Called when hotkey registration fails (e.g., Spotlight occupies Cmd+Space).
     var onRegistrationFailed: ((String) -> Void)?
+    var onHotkeyChanged: (() -> Void)?
 
     init(onToggle: @escaping @MainActor () -> Void) {
         self.onToggle = onToggle
@@ -60,6 +73,7 @@ final class HotkeyManager {
 
         // Save to config
         saveHotkey(displayName)
+        onHotkeyChanged?()
 
         // Verify it works by checking if the hotkey is actually registered
         // (HotKey library doesn't provide a direct way to check, but if Spotlight
@@ -70,6 +84,14 @@ final class HotkeyManager {
         }
 
         return true
+    }
+
+    func suspend() {
+        hotKey = nil
+    }
+
+    func resume() {
+        setHotkey(currentHotkey)
     }
 
     /// Open System Settings → Keyboard → Keyboard Shortcuts → Spotlight
@@ -103,5 +125,46 @@ final class HotkeyManager {
 
     private func saveHotkey(_ displayName: String) {
         UserDefaults.standard.set(displayName, forKey: "globalHotkey")
+    }
+}
+
+/// Registers the optional per-target shortcuts configured alongside aliases.
+@MainActor
+final class AliasHotkeyManager {
+    private var hotKeys: [HotKey] = []
+    private var isSuspended = false
+    private let onInvoke: @MainActor (LauncherTargetRef) -> Void
+
+    init(onInvoke: @escaping @MainActor (LauncherTargetRef) -> Void) {
+        self.onInvoke = onInvoke
+        reload()
+    }
+
+    func reload() {
+        guard !isSuspended else { return }
+        hotKeys = AliasStore.load().compactMap { entry in
+            guard let binding = entry.hotkey,
+                  !HotkeyConfig.isLauncherHotkey(binding)
+            else { return nil }
+            let target = entry.target
+            let hotKey = HotKey(
+                carbonKeyCode: binding.keyCode,
+                carbonModifiers: binding.modifiers
+            )
+            hotKey.keyUpHandler = { [weak self] in
+                Task { @MainActor in self?.onInvoke(target) }
+            }
+            return hotKey
+        }
+    }
+
+    func suspend() {
+        isSuspended = true
+        hotKeys = []
+    }
+
+    func resume() {
+        isSuspended = false
+        reload()
     }
 }

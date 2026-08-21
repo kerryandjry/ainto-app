@@ -20,6 +20,13 @@ const char* rc_config_load(void);
 int32_t rc_config_save(const char* json);
 
 // ============================================================
+// Calculator
+// ============================================================
+
+/// Evaluate a safe arithmetic expression and write its result.
+bool rc_calculate(const char* expression, double* out_result);
+
+// ============================================================
 // App Discovery & Search
 // ============================================================
 
@@ -29,8 +36,17 @@ const char* rc_discover_apps(bool store_icons);
 /// Search apps by query, returns JSON array string
 const char* rc_search_apps(const char* query);
 
+/// Get every indexed app, including stable bundle identifiers.
+const char* rc_get_all_apps(void);
+
 /// Get top-ranked (most used) apps, returns JSON array string
 const char* rc_get_top_apps(uint64_t limit);
+
+/// Get pinned home-page apps, ordered by frecency then name.
+const char* rc_get_pinned_apps(uint64_t limit);
+
+/// Set an app's pinned state. Returns 0 on success or -2 at the eight-app limit.
+int32_t rc_set_app_pinned(const char* app_path, bool pinned);
 
 /// Increment ranking for any key (app path or "cmd:name"), returns new value
 int32_t rc_increment_ranking(const char* key);
@@ -106,6 +122,16 @@ int32_t rc_snippets_save(const char* json);
 /// Expand a snippet's text with placeholders resolved
 /// clipboard_text can be NULL
 const char* rc_snippet_expand(const char* expansion_text, const char* clipboard_text);
+
+// ============================================================
+// Global Aliases
+// ============================================================
+
+/// Load aliases as JSON array.
+const char* rc_aliases_load(void);
+
+/// Validate and save aliases from a JSON array. Returns 0 on success.
+int32_t rc_aliases_save(const char* json);
 
 // ============================================================
 // AI Commands
