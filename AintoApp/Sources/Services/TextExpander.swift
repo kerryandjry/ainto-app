@@ -209,28 +209,43 @@ final class TextExpander {
     }
 
     /// Check if the buffer ends with any snippet keyword.
+    ///
+    /// Runs on the CGEvent tap thread, so it stays a pure dictionary lookup.
+    /// Placeholder resolution needs the pasteboard, and a pasteboard read can
+    /// block on a slow or dead promised-data provider (see the note on
+    /// `ClipboardMonitor`); stalling here would make macOS disable the tap.
+    /// The raw expansion is resolved later, on the main queue.
     private static func findMatch() -> (keyword: String, expansion: String)? {
         // Check from longest possible match to shortest
         let maxLen = min(buffer.count, maxBufferLength)
         for len in stride(from: maxLen, through: 1, by: -1) {
             let suffix = String(buffer.suffix(len))
             if let expansion = snippetMap[suffix] {
-                // Resolve placeholders
-                var resolved = expansion
-                let clipboardText = NSPasteboard.general.string(forType: .string)
-                if let cStr = rc_snippet_expand(expansion, clipboardText) {
-                    resolved = String(cString: cStr)
-                    rc_free_string(cStr)
-                }
-                return (suffix, resolved)
+                return (suffix, expansion)
             }
         }
         return nil
     }
 
+    /// Resolve `{date}`, `{clipboard}` and friends. Main queue only.
+    private static func resolvePlaceholders(in expansion: String) -> String {
+        let clipboardText = NSPasteboard.general.string(forType: .string)
+        guard let cStr = rc_snippet_expand(expansion, clipboardText) else { return expansion }
+        let resolved = String(cString: cStr)
+        rc_free_string(cStr)
+        return resolved
+    }
+
+    /// How long to leave the expansion on the pasteboard before restoring what
+    /// was there. The paste is delivered as a synthetic Cmd+V, and there is no
+    /// signal for when the target app has consumed it — so this is a heuristic:
+    /// too short and a slow app pastes the restored contents instead.
+    private static let clipboardRestoreDelay: TimeInterval = 0.4
+
     /// Delete the keyword characters and type the expansion.
     private static func performReplacement(keywordLength: Int, expansion: String) {
         let source = CGEventSource(stateID: .combinedSessionState)
+        let resolved = resolvePlaceholders(in: expansion)
 
         // Step 1: Send backspace to delete the keyword (minus the last char which was suppressed)
         for _ in 0..<(keywordLength - 1) {
@@ -246,10 +261,11 @@ final class TextExpander {
         // Step 3: Type the expansion by writing to clipboard and pasting
         // Mark as transient so ClipboardMonitor ignores it
         let pasteboard = NSPasteboard.general
-        let oldContents = pasteboard.string(forType: .string)
+        let saved = snapshot(pasteboard)
         pasteboard.clearContents()
-        pasteboard.setString(expansion, forType: .string)
+        pasteboard.setString(resolved, forType: .string)
         pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
+        let ourChangeCount = pasteboard.changeCount
 
         // Simulate Cmd+V
         let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
@@ -259,12 +275,31 @@ final class TextExpander {
         vUp?.flags = .maskCommand
         vUp?.post(tap: .cghidEventTap)
 
-        // Step 4: Restore previous clipboard after a delay
-        if let old = oldContents {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                pasteboard.clearContents()
-                pasteboard.setString(old, forType: .string)
+        // Step 4: Put back what was on the pasteboard, unless something else
+        // has written to it since — restoring then would clobber that.
+        guard !saved.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + clipboardRestoreDelay) {
+            guard pasteboard.changeCount == ourChangeCount else { return }
+            pasteboard.clearContents()
+            pasteboard.writeObjects(saved)
+        }
+    }
+
+    /// Copy every item on the pasteboard, with all of its flavours.
+    ///
+    /// Restoring only `.string` used to destroy anything else that was on the
+    /// clipboard — an image or a copied file did not survive an expansion.
+    private static func snapshot(_ pasteboard: NSPasteboard) -> [NSPasteboardItem] {
+        (pasteboard.pasteboardItems ?? []).compactMap { item in
+            let copy = NSPasteboardItem()
+            var wroteAnything = false
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                    wroteAnything = true
+                }
             }
+            return wroteAnything ? copy : nil
         }
     }
 }
