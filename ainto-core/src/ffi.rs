@@ -403,13 +403,21 @@ pub extern "C" fn rc_clipboard_get_recent(limit: u64) -> *const c_char {
     to_c_string(&json)
 }
 
+/// `content_type` filters the query in SQL: "text", "image", "file", or null
+/// for no filter. Filtering here rather than in the caller keeps a page worth
+/// `limit` entries *of that type*.
 #[unsafe(no_mangle)]
-pub extern "C" fn rc_clipboard_get_recent_paged(limit: u64, offset: u64) -> *const c_char {
+pub extern "C" fn rc_clipboard_get_recent_paged(
+    limit: u64,
+    offset: u64,
+    content_type: *const c_char,
+) -> *const c_char {
+    let filter = clipboard_store::TypeFilter::parse(from_c_str(content_type).as_deref());
     let guard = CLIPBOARD_STORE.lock().ok();
     let entries = guard
         .as_ref()
         .and_then(|opt| opt.as_ref())
-        .and_then(|store| store.get_recent_paged(limit as usize, offset as usize).ok())
+        .and_then(|store| store.get_recent_paged(limit as usize, offset as usize, filter).ok())
         .unwrap_or_default();
 
     let json_entries: Vec<serde_json::Value> = entries.iter().map(entry_to_json).collect();
@@ -419,19 +427,26 @@ pub extern "C" fn rc_clipboard_get_recent_paged(limit: u64, offset: u64) -> *con
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_clipboard_search(query: *const c_char) -> *const c_char {
-    rc_clipboard_search_paged(query, 50, 0)
+    rc_clipboard_search_paged(query, 50, 0, ptr::null())
 }
 
+/// See `rc_clipboard_get_recent_paged` for `content_type`.
 #[unsafe(no_mangle)]
-pub extern "C" fn rc_clipboard_search_paged(query: *const c_char, limit: u64, offset: u64) -> *const c_char {
+pub extern "C" fn rc_clipboard_search_paged(
+    query: *const c_char,
+    limit: u64,
+    offset: u64,
+    content_type: *const c_char,
+) -> *const c_char {
     let Some(q) = from_c_str(query) else {
         return to_c_string("[]");
     };
+    let filter = clipboard_store::TypeFilter::parse(from_c_str(content_type).as_deref());
     let guard = CLIPBOARD_STORE.lock().ok();
     let entries = guard
         .as_ref()
         .and_then(|opt| opt.as_ref())
-        .and_then(|store| store.search_paged(&q, limit as usize, offset as usize).ok())
+        .and_then(|store| store.search_paged(&q, limit as usize, offset as usize, filter).ok())
         .unwrap_or_default();
 
     let json_entries: Vec<serde_json::Value> = entries.iter().map(entry_to_json).collect();

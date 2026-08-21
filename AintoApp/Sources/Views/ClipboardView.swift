@@ -7,6 +7,16 @@ enum ClipboardTypeFilter: String, CaseIterable {
     case text = "Text Only"
     case images = "Images Only"
     case files = "Files Only"
+
+    /// Wire value for the Rust query filter; nil means no filter.
+    var contentType: String? {
+        switch self {
+        case .all: return nil
+        case .text: return "text"
+        case .images: return "image"
+        case .files: return "file"
+        }
+    }
 }
 
 /// Clipboard history sub-page — Raycast-style split pane.

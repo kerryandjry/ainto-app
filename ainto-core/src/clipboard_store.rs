@@ -24,6 +24,41 @@ pub enum ClipboardContent {
     },
 }
 
+/// Content-type filter for history queries.
+///
+/// Each variant maps to a literal SQL predicate — no user input is ever
+/// interpolated into the query.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum TypeFilter {
+    #[default]
+    All,
+    Text,
+    Image,
+    File,
+}
+
+impl TypeFilter {
+    /// Parse the wire value sent across the FFI boundary. Anything
+    /// unrecognised (including absent) means "no filter".
+    pub fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some("text") => Self::Text,
+            Some("image") => Self::Image,
+            Some("file") => Self::File,
+            _ => Self::All,
+        }
+    }
+
+    fn predicate(self) -> &'static str {
+        match self {
+            Self::All => "1 = 1",
+            Self::Text => "content_type = 'text'",
+            Self::Image => "content_type = 'image'",
+            Self::File => "content_type = 'file'",
+        }
+    }
+}
+
 /// A single clipboard history entry.
 #[derive(Debug, Clone)]
 pub struct ClipboardEntry {
@@ -145,16 +180,26 @@ impl ClipboardStore {
 
     /// Get recent clipboard entries.
     pub fn get_recent(&self, limit: usize) -> Result<Vec<ClipboardEntry>, Error> {
-        self.get_recent_paged(limit, 0)
+        self.get_recent_paged(limit, 0, TypeFilter::All)
     }
 
-    pub fn get_recent_paged(&self, limit: usize, offset: usize) -> Result<Vec<ClipboardEntry>, Error> {
-        let mut stmt = self.db.prepare(
+    /// Filtering happens in SQL so a page is `limit` entries *of the requested
+    /// type*, rather than `limit` entries that are then thinned out in memory.
+    pub fn get_recent_paged(
+        &self,
+        limit: usize,
+        offset: usize,
+        filter: TypeFilter,
+    ) -> Result<Vec<ClipboardEntry>, Error> {
+        let sql = format!(
             "SELECT id, content_type, text_content, image_path, hash, source_app, last_copied_at, copy_count
              FROM clipboard_items
+             WHERE {}
              ORDER BY last_copied_at DESC
              LIMIT ?1 OFFSET ?2",
-        )?;
+            filter.predicate()
+        );
+        let mut stmt = self.db.prepare(&sql)?;
 
         let entries = stmt
             .query_map(params![limit as i64, offset as i64], |row| {
@@ -196,24 +241,39 @@ impl ClipboardStore {
 
     /// Search clipboard entries by text content.
     pub fn search(&self, query: &str) -> Result<Vec<ClipboardEntry>, Error> {
-        self.search_paged(query, 50, 0)
+        self.search_paged(query, 50, 0, TypeFilter::All)
     }
 
-    pub fn search_paged(&self, query: &str, limit: usize, offset: usize) -> Result<Vec<ClipboardEntry>, Error> {
+    pub fn search_paged(
+        &self,
+        query: &str,
+        limit: usize,
+        offset: usize,
+        filter: TypeFilter,
+    ) -> Result<Vec<ClipboardEntry>, Error> {
         let pattern = format!("%{query}%");
-        let mut stmt = self.db.prepare(
+        let sql = format!(
             "SELECT id, content_type, text_content, image_path, hash, source_app, last_copied_at, copy_count
              FROM clipboard_items
-             WHERE text_content LIKE ?1
+             WHERE text_content LIKE ?1 AND {}
              ORDER BY last_copied_at DESC
              LIMIT ?2 OFFSET ?3",
-        )?;
+            filter.predicate()
+        );
+        let mut stmt = self.db.prepare(&sql)?;
 
         let entries = stmt
             .query_map(params![pattern, limit as i64, offset as i64], |row| {
                 let content_type: String = row.get(1)?;
                 let text: Option<String> = row.get(2)?;
+                let image_path: Option<String> = row.get(3)?;
                 let content = match content_type.as_str() {
+                    "image" => ClipboardContent::Image {
+                        png_bytes: Vec::new(),
+                        width: 0,
+                        height: 0,
+                        filename: image_path,
+                    },
                     "file" => ClipboardContent::File { path: text.unwrap_or_default() },
                     _ => ClipboardContent::Text(text.unwrap_or_default()),
                 };
@@ -358,4 +418,69 @@ pub fn rgba_to_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, Erro
         image::ImageFormat::Png,
     )?;
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_store() -> (ClipboardStore, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("ainto-clip-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ClipboardStore::open(&dir.join("t.db"), &dir.join("img"), 1000, 1000).unwrap();
+        (store, dir)
+    }
+
+    /// The type filter has to run in SQL. When it was applied to the already
+    /// loaded page instead, an image older than a full page of text was
+    /// invisible under "Images Only" even though it was in the database.
+    #[test]
+    fn type_filter_reaches_past_the_first_page() {
+        let (mut store, dir) = temp_store();
+
+        let image = ClipboardContent::Image {
+            png_bytes: vec![1, 2, 3],
+            width: 1,
+            height: 1,
+            filename: None,
+        };
+        store.insert(&image, hash_content(&image), None).unwrap();
+
+        // Bury it under more text entries than a page holds.
+        for i in 0..60 {
+            let text = ClipboardContent::Text(format!("entry {i}"));
+            store.insert(&text, hash_content(&text), None).unwrap();
+        }
+
+        let page = store.get_recent_paged(50, 0, TypeFilter::Image).unwrap();
+        assert_eq!(page.len(), 1, "the image must be found beyond the first page");
+        assert!(matches!(page[0].content, ClipboardContent::Image { .. }));
+
+        let text_page = store.get_recent_paged(50, 0, TypeFilter::Text).unwrap();
+        assert_eq!(text_page.len(), 50, "a page is 50 entries of the asked-for type");
+        assert!(text_page.iter().all(|e| matches!(e.content, ClipboardContent::Text(_))));
+
+        let all = store.get_recent_paged(50, 0, TypeFilter::All).unwrap();
+        assert_eq!(all.len(), 50);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Search results keep their image filename so the row can render a thumbnail.
+    #[test]
+    fn search_respects_the_type_filter() {
+        let (mut store, dir) = temp_store();
+        for name in ["alpha note", "beta note", "alpha memo"] {
+            let text = ClipboardContent::Text(name.to_string());
+            store.insert(&text, hash_content(&text), None).unwrap();
+        }
+
+        let hits = store.search_paged("alpha", 50, 0, TypeFilter::Text).unwrap();
+        assert_eq!(hits.len(), 2);
+
+        let none = store.search_paged("alpha", 50, 0, TypeFilter::Image).unwrap();
+        assert!(none.is_empty(), "text rows must not match an image filter");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
