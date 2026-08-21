@@ -22,9 +22,10 @@ struct Control {
     /// its pid and its pgid.
     pid: i32,
     cancelled: AtomicBool,
-    /// Set once the child has been reaped. After that the pid may be recycled
-    /// by the OS, so it must never be signalled again.
-    reaped: AtomicBool,
+    /// Protected by a lock shared with `try_wait`, so checking whether the
+    /// child was reaped and signalling its process group are atomic with
+    /// respect to PID reuse.
+    reaped: Mutex<bool>,
 }
 
 impl Control {
@@ -32,14 +33,16 @@ impl Control {
         if self.cancelled.swap(true, Ordering::SeqCst) {
             return; // already cancelled
         }
-        if self.reaped.load(Ordering::SeqCst) {
+        let reaped = self.reaped.lock().unwrap_or_else(|error| error.into_inner());
+        if *reaped {
             return; // pid no longer ours
         }
         // Signal the whole group, not just the child. `claude` is typically
         // reached through a wrapper (an npm shim, a shell script), and the
         // grandchild doing the real work inherits our stdout pipe — killing
         // only the direct child leaves that pipe open and the reader blocked
-        // forever.
+        // forever. Holding `reaped` across the signal prevents `try_wait`
+        // from reaping the child and making this pid reusable in between.
         unsafe { libc::kill(-self.pid, libc::SIGKILL) };
     }
 
@@ -163,7 +166,7 @@ impl ClaudeSession {
             control: Control {
                 pid,
                 cancelled: AtomicBool::new(false),
-                reaped: AtomicBool::new(false),
+                reaped: Mutex::new(false),
             },
             stderr,
         })
@@ -229,20 +232,30 @@ impl ClaudeSession {
             .unwrap_or_default();
 
         let exit_info = match self.io.lock() {
-            Ok(mut io) => match io.child.try_wait() {
-                Ok(Some(status)) => {
-                    // try_wait reaped the child; the pid must not be signalled
-                    // again because the OS is free to reuse it.
-                    self.control.reaped.store(true, Ordering::SeqCst);
-                    if status.success() {
-                        String::new()
-                    } else {
-                        format!("Process exited with {status}")
+            Ok(mut io) => {
+                // Hold the same lock used by cancel while `try_wait` may reap
+                // the child. This closes the check/reap/signal PID-reuse race
+                // without involving the IO lock in cancellation.
+                let mut reaped = self
+                    .control
+                    .reaped
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                let result = match io.child.try_wait() {
+                    Ok(Some(status)) => {
+                        *reaped = true;
+                        if status.success() {
+                            String::new()
+                        } else {
+                            format!("Process exited with {status}")
+                        }
                     }
-                }
-                Ok(None) => "Process still running".into(),
-                Err(e) => format!("Could not check process: {e}"),
-            },
+                    Ok(None) => "Process still running".into(),
+                    Err(error) => format!("Could not check process: {error}"),
+                };
+                drop(reaped);
+                result
+            }
             Err(_) => String::new(),
         };
 
