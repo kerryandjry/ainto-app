@@ -4,6 +4,7 @@
 //! Uses std::process (synchronous blocking IO) — called from a background thread on the Swift side.
 
 use std::io::{BufRead, BufReader};
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,8 @@ use crate::Error;
 /// not need `&mut Child` (that would alias the reader thread's borrow). It
 /// signals by pid instead.
 struct Control {
+    /// The child is spawned as its own process-group leader, so this is both
+    /// its pid and its pgid.
     pid: i32,
     cancelled: AtomicBool,
     /// Set once the child has been reaped. After that the pid may be recycled
@@ -32,7 +35,12 @@ impl Control {
         if self.reaped.load(Ordering::SeqCst) {
             return; // pid no longer ours
         }
-        unsafe { libc::kill(self.pid, libc::SIGKILL) };
+        // Signal the whole group, not just the child. `claude` is typically
+        // reached through a wrapper (an npm shim, a shell script), and the
+        // grandchild doing the real work inherits our stdout pipe — killing
+        // only the direct child leaves that pipe open and the reader blocked
+        // forever.
+        unsafe { libc::kill(-self.pid, libc::SIGKILL) };
     }
 
     fn is_cancelled(&self) -> bool {
@@ -119,6 +127,9 @@ impl ClaudeSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null())
+            // Own process group, so cancelling can signal the whole tree
+            // without the signal reaching us as well.
+            .process_group(0)
             .spawn()
             .map_err(|e| Error::ClaudeSpawn(e.to_string()))?;
 
@@ -261,6 +272,7 @@ impl ClaudeSession {
 impl Drop for ClaudeSession {
     fn drop(&mut self) {
         self.control.cancel();
+        // The group is gone; reap the direct child so it is not left a zombie.
         if let Ok(io) = self.io.get_mut() {
             let _ = io.child.wait();
         }
