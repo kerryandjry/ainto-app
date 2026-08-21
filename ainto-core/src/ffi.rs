@@ -598,8 +598,8 @@ pub extern "C" fn rc_claude_get_session_id(session: *mut std::ffi::c_void) -> *c
         return ptr::null();
     }
     let session = unsafe { &*(session as *const ClaudeSession) };
-    match &session.session_id {
-        Some(id) => to_c_string(id),
+    match session.session_id() {
+        Some(id) => to_c_string(&id),
         None => ptr::null(),
     }
 }
@@ -609,7 +609,7 @@ pub extern "C" fn rc_claude_next_chunk(session: *mut std::ffi::c_void) -> *const
     if session.is_null() {
         return ptr::null();
     }
-    let session = unsafe { &mut *(session as *mut ClaudeSession) };
+    let session = unsafe { &*(session as *const ClaudeSession) };
 
     match session.next_chunk() {
         Some(text) => to_c_string(&text),
@@ -623,7 +623,7 @@ pub extern "C" fn rc_claude_get_response(session: *mut std::ffi::c_void) -> *con
         return to_c_string("");
     }
     let session = unsafe { &*(session as *const ClaudeSession) };
-    to_c_string(&session.response)
+    to_c_string(&session.response())
 }
 
 #[unsafe(no_mangle)]
@@ -631,18 +631,20 @@ pub extern "C" fn rc_claude_get_stderr(session: *mut std::ffi::c_void) -> *const
     if session.is_null() {
         return to_c_string("");
     }
-    let session = unsafe { &mut *(session as *mut ClaudeSession) };
+    let session = unsafe { &*(session as *const ClaudeSession) };
     let error = session.get_error();
     to_c_string(&error)
 }
 
-/// Cancel the running session (kill child process).
+/// Cancel the running session (signals the child).
+/// Safe to call from the UI thread while the reader thread is blocked in
+/// `rc_claude_next_chunk` — it takes no lock and does not touch the child handle.
 /// Does NOT free memory — the background reader thread may still hold the pointer.
 /// Call `rc_claude_free` after the reader thread has finished.
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_claude_cancel(session: *mut std::ffi::c_void) {
     if !session.is_null() {
-        let session = unsafe { &mut *(session as *mut ClaudeSession) };
+        let session = unsafe { &*(session as *const ClaudeSession) };
         session.cancel();
     }
 }
