@@ -84,6 +84,15 @@ struct ClaudeView: View {
                     .onAppear { isInputFocused = true }
                     .disabled(viewModel.claudeIsStreaming)
 
+                if viewModel.claudeCanRetryLastRequest {
+                    Button(action: { viewModel.claudeRetryLastRequest() }) {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                }
+
                 if viewModel.claudeIsStreaming {
                     Button(action: { viewModel.claudeCancel() }) {
                         Image(systemName: "stop.circle.fill")
@@ -185,7 +194,7 @@ struct ThinkingDots: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(0..<3, id: \.self) { i in
+            ForEach(0..<3, id: \.self) { index in
                 Circle()
                     .fill(Color.orange)
                     .frame(width: 6, height: 6)
@@ -193,7 +202,7 @@ struct ThinkingDots: View {
                     .animation(
                         .easeInOut(duration: 0.5)
                             .repeatForever(autoreverses: true)
-                            .delay(Double(i) * 0.15),
+                            .delay(Double(index) * 0.15),
                         value: animating
                     )
             }
