@@ -34,7 +34,7 @@ final class ClipboardMonitor {
         pollQueue.async { [weak self] in
             guard let self, !self.isRunning else { return }
             self.isRunning = true
-            self.lastChangeCount = NSPasteboard.general.changeCount
+            self.lastChangeCount = PasteboardAccess.withPasteboard { $0.changeCount }
             self.scheduleNextCheck()
         }
     }
@@ -55,71 +55,88 @@ final class ClipboardMonitor {
         }
     }
 
+    private enum CapturedContent: Sendable {
+        case files([String])
+        case text(String)
+        case image(Data, width: UInt32, height: UInt32)
+    }
+
     /// Runs on `pollQueue`, never the main thread.
     private nonisolated func checkClipboard() {
-        let pasteboard = NSPasteboard.general
-        let currentCount = pasteboard.changeCount
-        guard currentCount != lastChangeCount else { return }
-        lastChangeCount = currentCount
+        let captured: CapturedContent? = PasteboardAccess.withPasteboard { pasteboard in
+            let currentCount = pasteboard.changeCount
+            guard currentCount != lastChangeCount else { return nil }
+            lastChangeCount = currentCount
 
-        // Check for transient/concealed types (password managers, etc.)
-        if let types = pasteboard.types {
-            let typeStrings = Set(types.map(\.rawValue))
-            if !typeStrings.isDisjoint(with: Self.transientTypes) {
-                return // Skip sensitive clipboard content
+            // Check for transient/concealed types (password managers, etc.)
+            if let types = pasteboard.types {
+                let typeStrings = Set(types.map(\.rawValue))
+                if !typeStrings.isDisjoint(with: Self.transientTypes) {
+                    return nil
+                }
+            }
+
+            // Copying a browser link also includes `public.url`, so retain only
+            // actual file URLs before falling back to the text representation.
+            let filePaths = ((pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? [])
+                .filter(\.isFileURL)
+                .map(\.path)
+            if !filePaths.isEmpty {
+                return .files(filePaths)
+            }
+            if let text = pasteboard.string(forType: .string), !text.isEmpty {
+                return .text(text)
+            }
+            if let imageData = pasteboard.data(forType: .png) {
+                return .image(imageData, width: 0, height: 0)
+            }
+            if let tiffData = pasteboard.data(forType: .tiff),
+               let bitmap = NSBitmapImageRep(data: tiffData),
+               let pngData = bitmap.representation(using: .png, properties: [:]) {
+                return .image(
+                    pngData,
+                    width: UInt32(bitmap.pixelsWide),
+                    height: UInt32(bitmap.pixelsHigh)
+                )
+            }
+            return nil
+        }
+        guard let captured else { return }
+
+        // NSWorkspace is AppKit state as well; read it on the main actor, then
+        // enqueue persistence back onto the serial poll queue.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let sourceApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+            self.pollQueue.async { [weak self] in
+                self?.persist(captured, sourceApp: sourceApp)
+            }
+        }
+    }
+
+    private nonisolated func persist(_ captured: CapturedContent, sourceApp: String?) {
+        switch captured {
+        case .files(let paths):
+            for path in paths {
+                _ = rc_clipboard_insert_file(path, sourceApp)
+            }
+        case .text(let text):
+            _ = rc_clipboard_insert_text(text, sourceApp)
+        case .image(let data, let width, let height):
+            data.withUnsafeBytes { buffer in
+                guard let pointer = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                _ = rc_clipboard_insert_image(
+                    pointer,
+                    UInt64(data.count),
+                    width,
+                    height,
+                    sourceApp
+                )
             }
         }
 
-        // Get source app bundle ID
-        let sourceApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-
-        var didInsert = false
-
-        // Try file URL (Finder copy). Copying a link from a browser also puts a
-        // `public.url` on the pasteboard, so match on file URLs specifically —
-        // otherwise a copied web link inserts nothing yet still short-circuits
-        // the text branch below, and never reaches the history.
-        let fileURLs = (pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL])?
-            .filter(\.isFileURL) ?? []
-        if !fileURLs.isEmpty {
-            for url in fileURLs {
-                let _ = rc_clipboard_insert_file(url.path, sourceApp)
-            }
-            didInsert = true
-        }
-
-        // Try to read text content
-        else if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            let _ = rc_clipboard_insert_text(text, sourceApp)
-            didInsert = true
-        }
-
-        // Try to read image content (PNG)
-        else if let imageData = pasteboard.data(forType: .png) {
-            imageData.withUnsafeBytes { buffer in
-                guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-                let _ = rc_clipboard_insert_image(ptr, UInt64(imageData.count), 0, 0, sourceApp)
-            }
-            didInsert = true
-        }
-
-        // Try TIFF (screenshots are often TIFF)
-        else if let tiffData = pasteboard.data(forType: .tiff),
-           let bitmap = NSBitmapImageRep(data: tiffData),
-           let pngData = bitmap.representation(using: .png, properties: [:]) {
-            pngData.withUnsafeBytes { buffer in
-                guard let ptr = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-                let width = UInt32(bitmap.pixelsWide)
-                let height = UInt32(bitmap.pixelsHigh)
-                let _ = rc_clipboard_insert_image(ptr, UInt64(pngData.count), width, height, sourceApp)
-            }
-            didInsert = true
-        }
-
-        if didInsert {
-            Task { @MainActor [weak self] in
-                self?.onClipboardChanged?()
-            }
+        Task { @MainActor [weak self] in
+            self?.onClipboardChanged?()
         }
     }
 }
