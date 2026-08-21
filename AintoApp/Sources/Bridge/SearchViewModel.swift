@@ -346,7 +346,12 @@ final class SearchViewModel: ObservableObject {
         }
     }
     @Published var clipboardTypeFilter: ClipboardTypeFilter = .all {
-        didSet { rebuildFilteredClipboardItems() }
+        didSet {
+            guard oldValue != clipboardTypeFilter else { return }
+            // Re-query: the filter is applied in SQL, so switching it needs a
+            // fresh page rather than a thinner view of the one already loaded.
+            reloadClipboardPage()
+        }
     }
     @Published var debouncedClipboardFilter: String = ""
     private var clipboardFilterTask: DispatchWorkItem?
@@ -659,18 +664,20 @@ final class SearchViewModel: ObservableObject {
         let task = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.debouncedClipboardFilter = self.clipboardFilter
-            // Search via SQLite instead of in-memory filter
-            self.clipboardItems = self.fetchClipboardItems(query: self.debouncedClipboardFilter, offset: 0)
-            self.clipboardHasMore = self.clipboardItems.count >= self.clipboardPageSize
-            self.clipboardSelectedIndex = 0
-            self.rebuildFilteredClipboardItems()
+            self.reloadClipboardPage()
         }
         clipboardFilterTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: task)
     }
 
     func loadClipboardItems() {
-        clipboardItems = fetchClipboardItems(query: nil, offset: 0)
+        reloadClipboardPage()
+    }
+
+    /// Fetch the first page under the current text and type filters.
+    private func reloadClipboardPage() {
+        let query = debouncedClipboardFilter.isEmpty ? nil : debouncedClipboardFilter
+        clipboardItems = fetchClipboardItems(query: query, offset: 0)
         clipboardHasMore = clipboardItems.count >= clipboardPageSize
         clipboardSelectedIndex = 0
         rebuildFilteredClipboardItems()
@@ -689,10 +696,11 @@ final class SearchViewModel: ObservableObject {
     /// Fetch clipboard items from Rust/SQLite with optional search query.
     private func fetchClipboardItems(query: String?, offset: Int) -> [ClipboardItem] {
         let cStr: UnsafePointer<CChar>?
+        let contentType = clipboardTypeFilter.contentType
         if let query, !query.isEmpty {
-            cStr = rc_clipboard_search_paged(query, UInt64(clipboardPageSize), UInt64(offset))
+            cStr = rc_clipboard_search_paged(query, UInt64(clipboardPageSize), UInt64(offset), contentType)
         } else {
-            cStr = rc_clipboard_get_recent_paged(UInt64(clipboardPageSize), UInt64(offset))
+            cStr = rc_clipboard_get_recent_paged(UInt64(clipboardPageSize), UInt64(offset), contentType)
         }
         guard let cStr else { return [] }
         let jsonStr = String(cString: cStr)
@@ -724,16 +732,9 @@ final class SearchViewModel: ObservableObject {
     private(set) var clipboardIndexMap: [Int64: Int] = [:]
 
     private func rebuildFilteredClipboardItems() {
-        var items = clipboardItems
-
-        // Apply type filter (in-memory, since SQLite doesn't know our type categories)
-        switch clipboardTypeFilter {
-        case .all: break
-        case .text: items = items.filter { $0.contentType == "text" }
-        case .images: items = items.filter { $0.contentType == "image" }
-        case .files: items = items.filter { $0.contentType == "file" }
-        }
-
+        // Both the text and type filters are applied in SQL, so the loaded page
+        // is already the result set — only the derived views are rebuilt here.
+        let items = clipboardItems
         filteredClipboardItems = items
 
         // Rebuild derived data (used by ClipboardView)
@@ -741,7 +742,13 @@ final class SearchViewModel: ObservableObject {
         clipboardGroupedItems = grouped
         let order = ["Today": 0, "Yesterday": 1, "Earlier": 2]
         clipboardGroupedKeys = grouped.keys.sorted { (order[$0] ?? 3) < (order[$1] ?? 3) }
-        clipboardIndexMap = Dictionary(uniqueKeysWithValues: items.enumerated().map { ($1.id, $0) })
+        // `uniquingKeysWith` rather than `uniqueKeysWithValues`: pages are fetched
+        // by offset, so an insert between two fetches can shift the window and
+        // return a row twice. A duplicate must not trap.
+        clipboardIndexMap = Dictionary(
+            items.enumerated().map { ($1.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     func pasteSelectedClipboardItem() {

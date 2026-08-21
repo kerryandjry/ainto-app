@@ -70,14 +70,18 @@ const char* rc_clipboard_image_dir(void);
 /// Get recent clipboard entries as JSON array string
 const char* rc_clipboard_get_recent(uint64_t limit);
 
-/// Get recent clipboard entries with pagination
-const char* rc_clipboard_get_recent_paged(uint64_t limit, uint64_t offset);
+/// Get recent clipboard entries with pagination.
+/// content_type filters in SQL: "text", "image", "file", or NULL for no filter.
+const char* rc_clipboard_get_recent_paged(uint64_t limit, uint64_t offset,
+                                          const char* content_type);
 
 /// Search clipboard entries by text, returns JSON array string
 const char* rc_clipboard_search(const char* query);
 
-/// Search clipboard entries with pagination
-const char* rc_clipboard_search_paged(const char* query, uint64_t limit, uint64_t offset);
+/// Search clipboard entries with pagination.
+/// content_type filters in SQL: "text", "image", "file", or NULL for no filter.
+const char* rc_clipboard_search_paged(const char* query, uint64_t limit, uint64_t offset,
+                                      const char* content_type);
 
 /// Delete a clipboard entry by ID
 int32_t rc_clipboard_delete(int64_t id);
