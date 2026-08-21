@@ -155,6 +155,10 @@ struct SearchResult: Identifiable {
     var targetRef: LauncherTargetRef? = nil
     let action: () -> Void
     var actions: [ActionItem] = [] // Cmd+K to show
+    var alternateAction: (() -> Void)? // Cmd+Enter, used by Instant Answers
+    var instantAnswerID: String?
+    var instantAnswerIsPending = false
+    var keepsPanelOpenAfterAction = false
 
     /// Resolved icon: app icon or SF Symbol fallback
     var displayIcon: NSImage {
@@ -373,7 +377,8 @@ final class SearchViewModel: ObservableObject {
 
     /// Icon cache keyed by app path
     private var iconCache: [String: NSImage] = [:]
-
+    private let instantAnswerService = InstantAnswerService()
+    private var instantAnswerTask: Task<Void, Never>?
 
     /// Callback to hide panel and paste to frontmost app (set by SearchPanel)
     var onPasteAndHide: (() -> Void)?
@@ -504,6 +509,8 @@ final class SearchViewModel: ObservableObject {
     // MARK: - Main search
 
     func performSearch(query: String) {
+        instantAnswerTask?.cancel()
+        instantAnswerTask = nil
         guard !query.isEmpty else {
             results = buildDefaultResults()
             selectedIndex = 0
@@ -683,7 +690,124 @@ final class SearchViewModel: ObservableObject {
         }
         allResults.sort { $0.score > $1.score }
         results = Array(allResults.prefix(20))
+        if let pendingAnswer = instantAnswerService.pendingAnswer(for: query) {
+            results.append(instantAnswerResult(pendingAnswer))
+            results.sort { $0.score > $1.score }
+            results = Array(results.prefix(20))
+        }
         selectedIndex = 0
+        scheduleInstantAnswers(for: query)
+    }
+
+    private func scheduleInstantAnswers(for query: String) {
+        instantAnswerTask = Task { [weak self] in
+            guard let self else { return }
+            let answers = await instantAnswerService.answers(for: query)
+            guard !Task.isCancelled, self.query == query, self.page == .main else { return }
+            let selectedResultID = self.selectedIndex > 0 && self.results.indices.contains(self.selectedIndex)
+                ? self.results[self.selectedIndex].id
+                : nil
+            var updated = self.results.filter { $0.instantAnswerID == nil }
+            updated.append(contentsOf: answers.map { self.instantAnswerResult($0) })
+            updated.sort { $0.score > $1.score }
+            self.results = Array(updated.prefix(20))
+            if let selectedResultID,
+               let preservedIndex = self.results.firstIndex(where: { $0.id == selectedResultID }) {
+                self.selectedIndex = preservedIndex
+            } else {
+                self.selectedIndex = 0
+            }
+        }
+    }
+
+    private func instantAnswerResult(_ answer: InstantAnswer) -> SearchResult {
+        let copy = { [weak self] (value: String) in
+            self?.copyInstantAnswer(value)
+        }
+        var result = SearchResult(
+            title: answer.title,
+            subtitle: answer.subtitle,
+            icon: nil,
+            systemIcon: answer.systemIcon,
+            score: 9_000
+        ) { [weak self] in
+            if let value = answer.copyText {
+                copy(value)
+            } else if answer.canRefresh {
+                self?.refreshCurrencyInstantAnswer()
+            }
+        }
+        result.instantAnswerID = answer.id
+        result.instantAnswerIsPending = answer.isPending
+        result.keepsPanelOpenAfterAction = answer.isPending || (answer.copyText == nil && answer.canRefresh)
+        if let value = answer.copyText {
+            result.alternateAction = { [weak self] in self?.pasteInstantAnswer(value) }
+            result.actions = [
+                ActionItem(title: "Copy Result", icon: "doc.on.doc", shortcut: "↵") {
+                    copy(value)
+                },
+                ActionItem(
+                    title: answer.kind == .calculator ? "Copy Expression" : "Copy Source Amount",
+                    icon: "text.quote",
+                    shortcut: nil
+                ) {
+                    copy(answer.input)
+                },
+                ActionItem(title: "Paste Result", icon: "doc.on.clipboard", shortcut: "⌘ ↵") { [weak self] in
+                    self?.pasteInstantAnswer(value)
+                }
+            ]
+        }
+        if let swapQuery = answer.swapQuery {
+            result.actions.append(ActionItem(
+                title: "Swap Currencies",
+                icon: "arrow.left.arrow.right",
+                shortcut: nil,
+                keepPanel: true
+            ) { [weak self] in
+                self?.query = swapQuery
+            })
+        }
+        if answer.canRefresh {
+            result.actions.append(ActionItem(
+                title: "Refresh Rate",
+                icon: "arrow.clockwise",
+                shortcut: nil,
+                keepPanel: true
+            ) { [weak self] in
+                self?.refreshCurrencyInstantAnswer()
+            })
+        }
+        if let sourceURL = answer.sourceURL {
+            result.actions.append(ActionItem(
+                title: "View Rate Source",
+                icon: "safari",
+                shortcut: nil
+            ) {
+                NSWorkspace.shared.open(sourceURL)
+            })
+        }
+        return result
+    }
+
+    private func refreshCurrencyInstantAnswer() {
+        let currentQuery = query
+        Task { [weak self] in
+            guard let self else { return }
+            let refreshed = await self.instantAnswerService.refreshCurrencyRates()
+            guard refreshed, self.query == currentQuery else { return }
+            self.performSearch(query: currentQuery)
+        }
+    }
+
+    private func copyInstantAnswer(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
+
+    private func pasteInstantAnswer(_ value: String) {
+        copyInstantAnswer(value)
+        onPasteAndHide?()
     }
 
     func moveSelection(by offset: Int) {

@@ -8,7 +8,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::Mutex;
 
-use crate::{aliases, clipboard_store, config, discovery, search, snippets};
+use crate::{aliases, calculator, clipboard_store, config, discovery, search, snippets};
 
 // ============================================================
 // Global State
@@ -76,6 +76,32 @@ pub extern "C" fn rc_config_save(json: *const c_char) -> i32 {
         Ok(()) => 0,
         Err(_) => -1,
     }
+}
+
+// ============================================================
+// Calculator
+// ============================================================
+
+/// Evaluate a safe arithmetic expression and write the result to `out_result`.
+///
+/// # Safety
+/// `expression` must point to a valid NUL-terminated UTF-8 string and
+/// `out_result` must be valid for one `f64` write.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rc_calculate(expression: *const c_char, out_result: *mut f64) -> bool {
+    let Some(expression) = from_c_str(expression) else {
+        return false;
+    };
+    if out_result.is_null() {
+        return false;
+    }
+    let Ok(result) = calculator::calculate(&expression) else {
+        return false;
+    };
+    unsafe {
+        *out_result = result;
+    }
+    true
 }
 
 // ============================================================

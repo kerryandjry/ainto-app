@@ -4,6 +4,7 @@
 
 pub mod ai_commands;
 pub mod aliases;
+pub mod calculator;
 pub mod clipboard_store;
 pub mod claude;
 pub mod config;
