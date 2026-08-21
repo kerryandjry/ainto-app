@@ -48,6 +48,12 @@ final class SearchPanel: NSPanel {
             cv.wantsLayer = true
             cv.layer?.cornerRadius = 16
             cv.layer?.cornerCurve = .continuous
+            cv.layer?.maskedCorners = [
+                .layerMinXMinYCorner,
+                .layerMaxXMinYCorner,
+                .layerMinXMaxYCorner,
+                .layerMaxXMaxYCorner,
+            ]
             cv.layer?.masksToBounds = true
         }
 
