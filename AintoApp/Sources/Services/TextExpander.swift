@@ -276,12 +276,14 @@ final class TextExpander {
         vUp?.post(tap: .cghidEventTap)
 
         // Step 4: Put back what was on the pasteboard, unless something else
-        // has written to it since — restoring then would clobber that.
-        guard !saved.isEmpty else { return }
+        // has written to it since — restoring then would clobber that. Clearing
+        // without writing restores an originally empty pasteboard as well.
         DispatchQueue.main.asyncAfter(deadline: .now() + clipboardRestoreDelay) {
             guard pasteboard.changeCount == ourChangeCount else { return }
             pasteboard.clearContents()
-            pasteboard.writeObjects(saved)
+            if !saved.isEmpty {
+                pasteboard.writeObjects(saved)
+            }
         }
     }
 
