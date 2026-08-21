@@ -23,6 +23,12 @@ extension SearchViewModel {
         return result
     }
 
+    func invokeShortcutTarget(_ target: LauncherTargetRef) -> Bool {
+        guard let result = result(for: target) else { return false }
+        result.action()
+        return true
+    }
+
     private func result(for target: LauncherTargetRef) -> SearchResult? {
         switch target.kind {
         case .app:

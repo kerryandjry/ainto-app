@@ -120,6 +120,20 @@ final class SearchPanel: NSPanel {
         orderOut(nil)
     }
 
+    /// Invoke a saved target shortcut using the same behavior as selecting it in search.
+    func invokeShortcut(_ target: LauncherTargetRef) {
+        showPanel()
+        guard viewModel.invokeShortcutTarget(target) else {
+            hidePanel()
+            return
+        }
+        // Navigation and confirmation targets change the page and remain visible.
+        // Immediate targets (apps, snippets, and safe system actions) close the panel.
+        if viewModel.page == .main {
+            hidePanel()
+        }
+    }
+
     /// Hide panel, re-activate the previous app, and simulate Cmd+V to paste.
     func pasteToFrontmostApp() {
         hidePanel()

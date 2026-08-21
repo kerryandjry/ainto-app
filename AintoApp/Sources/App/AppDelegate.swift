@@ -7,12 +7,14 @@ import Sparkle
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var searchPanel: SearchPanel?
     private var hotkeyManager: HotkeyManager?
+    private var aliasHotkeyManager: AliasHotkeyManager?
     private var clipboardMonitor: ClipboardMonitor?
     private var textExpander: TextExpander?
     private var trayManager: TrayManager?
     private var settingsWindow: NSWindow?
     private var configWatcherSources: [DispatchSourceFileSystemObject] = []
     private var configWatcherFDs: [Int32] = []
+    private var shortcutResumeWorkItem: DispatchWorkItem?
 
     private var updaterController: SPUStandardUpdaterController?
 
@@ -54,6 +56,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeyManager = HotkeyManager { [weak self] in
             self?.toggleSearchPanel()
         }
+        aliasHotkeyManager = AliasHotkeyManager { [weak self] target in
+            self?.searchPanel?.invokeShortcut(target)
+        }
+        hotkeyManager?.onHotkeyChanged = { [weak self] in
+            self?.aliasHotkeyManager?.reload()
+        }
         // Spotlight/Raycast conflict warnings are handled in SettingsView
 
         // Start clipboard monitoring
@@ -76,6 +84,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(aliasesDidChange),
             name: .aliasesDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(shortcutRecordingDidBegin),
+            name: .shortcutRecordingDidBegin,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(shortcutRecordingDidEnd),
+            name: .shortcutRecordingDidEnd,
             object: nil
         )
 
@@ -120,6 +140,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func aliasesDidChange() {
         searchPanel?.viewModel.reloadAliases()
+        aliasHotkeyManager?.reload()
+    }
+
+    @objc private func shortcutRecordingDidBegin() {
+        shortcutResumeWorkItem?.cancel()
+        shortcutResumeWorkItem = nil
+        hotkeyManager?.suspend()
+        aliasHotkeyManager?.suspend()
+    }
+
+    @objc private func shortcutRecordingDidEnd() {
+        // Wait until the recorded physical key is released. Registering a key-up
+        // handler immediately can execute an existing shortcut while editing it.
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.hotkeyManager?.resume()
+            self?.aliasHotkeyManager?.resume()
+            self?.shortcutResumeWorkItem = nil
+        }
+        shortcutResumeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
