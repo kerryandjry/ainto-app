@@ -79,8 +79,9 @@ final class SearchPanel: NSPanel {
         viewModel.loadAISettings()
     }
 
-    /// Whether the user has ever positioned the panel manually.
-    private var hasUserPosition = false
+    /// Display used on the previous presentation. Moving within the same display
+    /// is preserved, while invoking from another display follows the mouse.
+    private var lastPresentedScreenFrame: NSRect?
 
     func showPanel() {
         // Alias editing activates Ainto. Preserve the last external app so
@@ -93,19 +94,7 @@ final class SearchPanel: NSPanel {
         // Pick up any Settings change to the AI master switch.
         viewModel.loadAISettings()
 
-        if !hasUserPosition {
-            let screen = NSScreen.screens.first(where: {
-                NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
-            }) ?? NSScreen.main ?? NSScreen.screens.first
-
-            if let screen {
-                let screenFrame = screen.visibleFrame
-                let x = screenFrame.midX - frame.width / 2
-                let y = screenFrame.maxY - (screenFrame.height * 0.25)
-                setFrameOrigin(NSPoint(x: x, y: y))
-            }
-            hasUserPosition = true
-        }
+        positionOnMouseScreenIfNeeded()
 
         // Do NOT call NSApp.activate — keep the previous app focused
         makeKeyAndOrderFront(nil)
@@ -117,7 +106,34 @@ final class SearchPanel: NSPanel {
     func hidePanel() {
         hideActionPanel()
         viewModel.prepareForPanelHide()
+        // If the user dragged the panel, remember the display it actually
+        // occupied so the next invocation can still follow the mouse.
+        if let screen {
+            lastPresentedScreenFrame = screen.frame
+        }
         orderOut(nil)
+    }
+
+    private func positionOnMouseScreenIfNeeded() {
+        let mouseLocation = NSEvent.mouseLocation
+        guard let targetScreen = NSScreen.screens.first(where: {
+            NSMouseInRect(mouseLocation, $0.frame, false)
+        }) ?? NSScreen.main ?? NSScreen.screens.first else { return }
+
+        let targetChanged = lastPresentedScreenFrame != targetScreen.frame
+        let panelIsOnTarget = screen?.frame == targetScreen.frame
+        guard lastPresentedScreenFrame == nil || targetChanged || !panelIsOnTarget else { return }
+
+        let visibleFrame = targetScreen.visibleFrame
+        let proposedX = visibleFrame.midX - frame.width / 2
+        // Place the panel's center roughly one quarter down from the top.
+        let proposedY = visibleFrame.maxY - visibleFrame.height * 0.25 - frame.height / 2
+        let maxX = max(visibleFrame.minX, visibleFrame.maxX - frame.width)
+        let maxY = max(visibleFrame.minY, visibleFrame.maxY - frame.height)
+        let x = min(max(proposedX, visibleFrame.minX), maxX)
+        let y = min(max(proposedY, visibleFrame.minY), maxY)
+        setFrameOrigin(NSPoint(x: x, y: y))
+        lastPresentedScreenFrame = targetScreen.frame
     }
 
     /// Invoke a saved target shortcut using the same behavior as selecting it in search.
