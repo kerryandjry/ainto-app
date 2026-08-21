@@ -98,8 +98,10 @@ final class FileSearchService: NSObject, ObservableObject {
                 QuickLookPreviewController.shared.preview(url)
             },
             ActionItem(title: "Copy Path", icon: "doc.on.doc", shortcut: nil) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url.path, forType: .string)
+                PasteboardAccess.withPasteboard { pasteboard in
+                    pasteboard.clearContents()
+                    pasteboard.setString(url.path, forType: .string)
+                }
             },
             ActionItem(title: "Open With…", icon: "square.and.arrow.up", shortcut: nil) { [weak self] in
                 guard self?.eligibleItem(at: url) != nil else { return }

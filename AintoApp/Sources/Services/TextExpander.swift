@@ -195,9 +195,14 @@ final class TextExpander {
             buffer = String(buffer.dropLast(keyword.count))
             lock.unlock()
 
-            // Perform replacement on main thread
-            DispatchQueue.main.async {
-                performReplacement(keywordLength: keyword.count, expansion: expansion)
+            // Perform replacement on the main actor without blocking it while
+            // another pasteboard operation owns the serialization gate.
+            Task { @MainActor in
+                await performReplacement(
+                    keyword: keyword,
+                    expansion: expansion,
+                    suppressedText: char
+                )
             }
 
             // Suppress the last keystroke (it's part of the keyword)
@@ -228,8 +233,7 @@ final class TextExpander {
     }
 
     /// Resolve `{date}`, `{clipboard}` and friends. Main queue only.
-    private static func resolvePlaceholders(in expansion: String) -> String {
-        let clipboardText = NSPasteboard.general.string(forType: .string)
+    private static func resolvePlaceholders(in expansion: String, clipboardText: String?) -> String {
         guard let cStr = rc_snippet_expand(expansion, clipboardText) else { return expansion }
         let resolved = String(cString: cStr)
         rc_free_string(cStr)
@@ -243,12 +247,29 @@ final class TextExpander {
     private static let clipboardRestoreDelay: TimeInterval = 0.4
 
     /// Delete the keyword characters and type the expansion.
-    private static func performReplacement(keywordLength: Int, expansion: String) {
+    private static func performReplacement(
+        keyword: String,
+        expansion: String,
+        suppressedText: String
+    ) async {
         let source = CGEventSource(stateID: .combinedSessionState)
-        let resolved = resolvePlaceholders(in: expansion)
+
+        // Snapshot before changing the target document. If an advertised
+        // representation cannot be preserved, replay the suppressed key and
+        // leave both the document and clipboard untouched.
+        await PasteboardAccess.acquireExclusiveAccess()
+        let pasteboard = NSPasteboard.general
+        let saved = PasteboardAccess.snapshotItems(from: pasteboard)
+        let clipboardText = pasteboard.string(forType: .string)
+        PasteboardAccess.endExclusiveAccess()
+        guard let saved else {
+            postUnicodeText(suppressedText, source: source)
+            return
+        }
+        let resolved = resolvePlaceholders(in: expansion, clipboardText: clipboardText)
 
         // Step 1: Send backspace to delete the keyword (minus the last char which was suppressed)
-        for _ in 0..<(keywordLength - 1) {
+        for _ in 0..<(keyword.count - 1) {
             let backDown = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true)
             backDown?.post(tap: .cghidEventTap)
             let backUp = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false)
@@ -260,12 +281,22 @@ final class TextExpander {
 
         // Step 3: Type the expansion by writing to clipboard and pasting
         // Mark as transient so ClipboardMonitor ignores it
-        let pasteboard = NSPasteboard.general
-        let saved = snapshot(pasteboard)
-        pasteboard.clearContents()
-        pasteboard.setString(resolved, forType: .string)
-        pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
-        let ourChangeCount = pasteboard.changeCount
+        let (ourChangeCount, didWrite) = PasteboardAccess.withPasteboard { pasteboard in
+            pasteboard.clearContents()
+            let didWrite = pasteboard.setString(resolved, forType: .string)
+            pasteboard.setData(
+                Data(),
+                forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+            )
+            return (pasteboard.changeCount, didWrite)
+        }
+        guard didWrite else {
+            PasteboardAccess.withPasteboard { pasteboard in
+                PasteboardAccess.restore(saved, to: pasteboard)
+            }
+            postUnicodeText(keyword, source: source)
+            return
+        }
 
         // Simulate Cmd+V
         let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
@@ -279,29 +310,30 @@ final class TextExpander {
         // has written to it since — restoring then would clobber that. Clearing
         // without writing restores an originally empty pasteboard as well.
         DispatchQueue.main.asyncAfter(deadline: .now() + clipboardRestoreDelay) {
-            guard pasteboard.changeCount == ourChangeCount else { return }
-            pasteboard.clearContents()
-            if !saved.isEmpty {
-                pasteboard.writeObjects(saved)
+            PasteboardAccess.withPasteboard { pasteboard in
+                guard pasteboard.changeCount == ourChangeCount else { return }
+                PasteboardAccess.restore(saved, to: pasteboard)
             }
         }
     }
 
-    /// Copy every item on the pasteboard, with all of its flavours.
-    ///
-    /// Restoring only `.string` used to destroy anything else that was on the
-    /// clipboard — an image or a copied file did not survive an expansion.
-    private static func snapshot(_ pasteboard: NSPasteboard) -> [NSPasteboardItem] {
-        (pasteboard.pasteboardItems ?? []).compactMap { item in
-            let copy = NSPasteboardItem()
-            var wroteAnything = false
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    copy.setData(data, forType: type)
-                    wroteAnything = true
-                }
-            }
-            return wroteAnything ? copy : nil
+    private static func postUnicodeText(_ text: String, source: CGEventSource?) {
+        let codeUnits = Array(text.utf16)
+        codeUnits.withUnsafeBufferPointer { buffer in
+            guard let pointer = buffer.baseAddress else { return }
+            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
+            keyDown?.keyboardSetUnicodeString(
+                stringLength: buffer.count,
+                unicodeString: pointer
+            )
+            keyDown?.post(tap: .cghidEventTap)
+
+            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+            keyUp?.keyboardSetUnicodeString(
+                stringLength: buffer.count,
+                unicodeString: pointer
+            )
+            keyUp?.post(tap: .cghidEventTap)
         }
     }
 }

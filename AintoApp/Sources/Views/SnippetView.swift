@@ -276,7 +276,9 @@ struct SnippetPreview: View {
     }
 
     private static func expand(_ expansion: String) -> String {
-        let clipboardText = NSPasteboard.general.string(forType: .string)
+        let clipboardText = PasteboardAccess.withPasteboard { pasteboard in
+            pasteboard.string(forType: .string)
+        }
         guard let cStr = rc_snippet_expand(expansion, clipboardText) else {
             return expansion
         }

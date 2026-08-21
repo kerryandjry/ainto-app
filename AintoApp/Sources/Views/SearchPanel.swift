@@ -200,8 +200,19 @@ final class SearchPanel: NSPanel {
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+
+            // Keep ClipboardMonitor and every other Ainto pasteboard user out
+            // of this multi-step copy transaction. Concurrent NSPasteboard
+            // reads mutate AppKit's internal type cache and can crash in
+            // `_updateTypeCacheIfNeeded`.
+            await PasteboardAccess.acquireExclusiveAccess()
+
             let pasteboard = NSPasteboard.general
-            let previousContent = pasteboard.string(forType: .string)
+            guard let previousItems = PasteboardAccess.snapshotItems(from: pasteboard) else {
+                PasteboardAccess.endExclusiveAccess()
+                completion(.failure("Ainto could not safely preserve the current clipboard."))
+                return
+            }
 
             hidePanel()
             previousApp.activate()
@@ -223,15 +234,17 @@ final class SearchPanel: NSPanel {
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
 
-            pasteboard.clearContents()
-            if let previousContent {
-                pasteboard.setString(previousContent, forType: .string)
+            PasteboardAccess.restore(previousItems, to: pasteboard)
+            if !previousItems.isEmpty {
                 pasteboard.setData(
                     Data(),
                     forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
                 )
             }
+            PasteboardAccess.endExclusiveAccess()
 
+            // Present UI and invoke callbacks only after releasing the
+            // non-reentrant gate; either path can synchronously read clipboard.
             makeKeyAndOrderFront(nil)
             completion(.success(selection))
         }
