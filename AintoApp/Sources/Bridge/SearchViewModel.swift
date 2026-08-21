@@ -1508,6 +1508,7 @@ final class SearchViewModel: ObservableObject {
         guard aiEnabled else { return }
         guard !query.isEmpty else { return }
         let prompt = query
+        let wasOnClaudePage = page == .claude
 
         // Add user message
         claudeMessages.append(ClaudeMessage(role: .user, text: prompt))
@@ -1521,9 +1522,12 @@ final class SearchViewModel: ObservableObject {
         claudeIsStreaming = true
         query = ""
 
-        // Start session via Rust FFI
-        // Only resume if we're on the Claude page already (continuing a conversation)
-        let resumeId = (page == .claude) ? claudeSessionId : nil
+        // Start session via Rust FFI. A command launched from search starts a
+        // fresh conversation; only a follow-up already on this page resumes.
+        let resumeId = wasOnClaudePage ? claudeSessionId : nil
+        if !wasOnClaudePage {
+            claudeSessionId = nil
+        }
         guard let session = rc_claude_start(prompt, claudeBinary, resumeId) else {
             // Update last message with error
             if let lastIdx = claudeMessages.indices.last {
@@ -1566,9 +1570,11 @@ final class SearchViewModel: ObservableObject {
                         else { return }
                         if let errorMessage {
                             if self.claudeMessages.indices.contains(assistantMessageIndex) {
-                                self.claudeMessages[assistantMessageIndex].text = errorMessage
+                                self.claudeMessages[assistantMessageIndex].text = Self.claudeDisplayError(errorMessage)
                             }
-                            self.claudeSessionId = nil
+                            if resumeId == nil {
+                                self.claudeSessionId = nil
+                            }
                         } else if let completedSessionID {
                             self.claudeSessionId = completedSessionID
                         }
@@ -1603,6 +1609,41 @@ final class SearchViewModel: ObservableObject {
             claudeSession = nil
         }
         claudeIsStreaming = false
+    }
+
+    var claudeCanRetryLastRequest: Bool {
+        guard !claudeIsStreaming,
+              let lastMessage = claudeMessages.last,
+              lastMessage.role == .assistant
+        else { return false }
+        return Self.isRetryableClaudeError(lastMessage.text)
+    }
+
+    func claudeRetryLastRequest() {
+        guard claudeCanRetryLastRequest,
+              let userIndex = claudeMessages.lastIndex(where: { $0.role == .user })
+        else { return }
+        let prompt = claudeMessages[userIndex].text
+        claudeMessages.removeSubrange(userIndex...)
+        query = prompt
+        claudeAsk()
+    }
+
+    private static func claudeDisplayError(_ error: String) -> String {
+        let lowercased = error.lowercased()
+        if lowercased.contains("529") || lowercased.contains("overloaded") {
+            return "Claude is temporarily overloaded (529). Try again in a moment."
+        }
+        return error
+    }
+
+    private static func isRetryableClaudeError(_ error: String) -> Bool {
+        let lowercased = error.lowercased()
+        return lowercased.contains("529")
+            || lowercased.contains("overloaded")
+            || lowercased.contains("rate limit")
+            || lowercased.contains("connection issue")
+            || lowercased.contains("ended without output")
     }
 
     /// Replace the selected text in the previous app with the last Claude response.
