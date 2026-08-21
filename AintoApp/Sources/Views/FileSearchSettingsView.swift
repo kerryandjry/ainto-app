@@ -49,18 +49,26 @@ struct FileSearchSettingsView: View {
                                 Spacer()
                                 Button {
                                     paths.removeAll { $0 == path }
-                                    if paths.isEmpty { paths = [NSHomeDirectory()] }
                                 } label: {
                                     Image(systemName: "minus.circle")
                                         .foregroundStyle(.secondary)
+                                        .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
-                                .disabled(paths.count == 1)
+                                .help("Remove folder")
                             }
                         }
                     }
                 }
-                .disabled(allLocations)
+                if paths.isEmpty && !allLocations {
+                    Text("Add at least one folder or enable Search entire Mac.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.orange)
+                } else if allLocations {
+                    Text("These folders will be used when Search entire Mac is turned off.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             SettingsCard {

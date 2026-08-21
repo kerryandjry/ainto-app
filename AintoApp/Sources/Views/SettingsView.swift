@@ -542,7 +542,6 @@ struct SettingsView: View {
         aiEnabled = config["ai_enabled"] as? Bool ?? true
         snippetsEnabled = config["snippets_enabled"] as? Bool ?? true
         fileSearchPaths = config["file_search_paths"] as? [String] ?? [NSHomeDirectory()]
-        if fileSearchPaths.isEmpty { fileSearchPaths = [NSHomeDirectory()] }
         fileSearchAllLocations = config["file_search_all_locations"] as? Bool ?? false
         fileSearchIncludeHidden = config["file_search_include_hidden"] as? Bool ?? false
         homeClipboardHistory = config["home_clipboard_history"] as? Bool ?? true
