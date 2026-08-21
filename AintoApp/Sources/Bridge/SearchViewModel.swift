@@ -323,6 +323,14 @@ final class SearchViewModel: ObservableObject {
     // are hidden from the launcher.
     @Published var aiEnabled: Bool = true
 
+    // Home visibility is independent from searchability. These values only
+    // affect the empty-query list; search, aliases, and shortcuts remain active.
+    private var homeClipboardHistory = true
+    private var homeFileSearch = true
+    private var homeSnippets = true
+    private var homeAICommands = true
+    private var homeAICommandIDs: Set<String>?
+
     // Agent CLI binary to spawn for AI sessions (config: claude_binary).
     var claudeBinary: String = "claude"
 
@@ -970,6 +978,11 @@ final class SearchViewModel: ObservableObject {
               let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         aiEnabled = config["ai_enabled"] as? Bool ?? true
         claudeBinary = (config["claude_binary"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "claude"
+        homeClipboardHistory = config["home_clipboard_history"] as? Bool ?? true
+        homeFileSearch = config["home_file_search"] as? Bool ?? true
+        homeSnippets = config["home_snippets"] as? Bool ?? true
+        homeAICommands = config["home_ai_commands"] as? Bool ?? true
+        homeAICommandIDs = (config["home_ai_command_ids"] as? [String]).map(Set.init)
         reloadAliases()
         fileSearch.reloadConfiguration()
         exitAISurfacesIfDisabled()
@@ -1202,26 +1215,32 @@ final class SearchViewModel: ObservableObject {
             }
         }
 
-        // Built-in commands
-        results.append(SearchResult(
-            title: "Clipboard History",
-            subtitle: "Command",
-            icon: nil,
-            systemIcon: "doc.on.clipboard",
-            targetRef: LauncherTargetRef(kind: .launcherCommand, id: "clipboard-history")
-        ) { [weak self] in self?.goToClipboard() })
+        // Built-in commands. Home visibility does not affect normal search.
+        if homeClipboardHistory {
+            results.append(SearchResult(
+                title: "Clipboard History",
+                subtitle: "Command",
+                icon: nil,
+                systemIcon: "doc.on.clipboard",
+                targetRef: LauncherTargetRef(kind: .launcherCommand, id: "clipboard-history")
+            ) { [weak self] in self?.goToClipboard() })
+        }
 
-        results.append(fileSearchCommandResult(score: 0))
+        if homeFileSearch {
+            results.append(fileSearchCommandResult(score: 0))
+        }
 
-        results.append(SearchResult(
-            title: "Snippets",
-            subtitle: "Command",
-            icon: nil,
-            systemIcon: "text.quote"
-        ) { [weak self] in self?.goToSnippets() })
+        if homeSnippets {
+            results.append(SearchResult(
+                title: "Snippets",
+                subtitle: "Command",
+                icon: nil,
+                systemIcon: "text.quote"
+            ) { [weak self] in self?.goToSnippets() })
+        }
 
         // AI surfaces — hidden entirely when the AI master switch is off.
-        if aiEnabled {
+        if aiEnabled && homeAICommands {
             results.append(SearchResult(
                 title: "AI Commands",
                 subtitle: "Command",
@@ -1229,10 +1248,17 @@ final class SearchViewModel: ObservableObject {
                 systemIcon: "sparkle"
             ) { [weak self] in self?.goToAICommands() })
 
-            // AI Commands — sorted by usage, top 4
+            // Explicit Home selections replace the legacy top-four behavior.
+            // The prefix remains a defensive cap for manually edited config files.
             let aiCommands = AICommand.loadAll()
-            let sorted = aiCommands.sorted { first, second in
-                commandRanking(for: first) > commandRanking(for: second)
+            let eligible = homeAICommandIDs.map { selected in
+                aiCommands.filter { selected.contains($0.id) }
+            } ?? aiCommands
+            let sorted = eligible.sorted { first, second in
+                let firstScore = commandRanking(for: first)
+                let secondScore = commandRanking(for: second)
+                if firstScore != secondScore { return firstScore > secondScore }
+                return first.name.localizedStandardCompare(second.name) == .orderedAscending
             }
             for cmd in sorted.prefix(4) {
                 let command = cmd

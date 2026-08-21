@@ -24,6 +24,13 @@ pub struct Config {
     pub file_search_all_locations: bool,
     /// Include hidden Spotlight results.
     pub file_search_include_hidden: bool,
+    /// Items shown on the launcher home page when the query is empty.
+    pub home_clipboard_history: bool,
+    pub home_file_search: bool,
+    pub home_snippets: bool,
+    pub home_ai_commands: bool,
+    /// Stable AI Command UUIDs selected for Home. None preserves legacy top-four behavior.
+    pub home_ai_command_ids: Option<Vec<String>>,
 }
 
 impl Default for Config {
@@ -39,6 +46,11 @@ impl Default for Config {
                 .unwrap_or_default(),
             file_search_all_locations: false,
             file_search_include_hidden: false,
+            home_clipboard_history: true,
+            home_file_search: true,
+            home_snippets: true,
+            home_ai_commands: true,
+            home_ai_command_ids: None,
         }
     }
 }
@@ -104,6 +116,26 @@ ai_enabled = true
             config.file_search_paths,
             Config::default().file_search_paths
         );
+        assert!(config.home_clipboard_history);
+        assert!(config.home_file_search);
+        assert!(config.home_snippets);
+        assert!(config.home_ai_commands);
+        assert!(config.home_ai_command_ids.is_none());
+    }
+
+    #[test]
+    fn home_item_settings_round_trip() {
+        let config = Config {
+            home_clipboard_history: false,
+            home_file_search: true,
+            home_snippets: false,
+            home_ai_commands: true,
+            home_ai_command_ids: Some(vec!["command-one".into(), "command-two".into()]),
+            ..Config::default()
+        };
+        let encoded = toml::to_string(&config).unwrap();
+        let decoded: Config = toml::from_str(&encoded).unwrap();
+        assert_eq!(decoded, config);
     }
 
     #[test]

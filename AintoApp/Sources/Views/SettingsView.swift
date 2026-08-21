@@ -19,6 +19,11 @@ struct SettingsView: View {
     @State private var fileSearchPaths: [String] = [NSHomeDirectory()]
     @State private var fileSearchAllLocations = false
     @State private var fileSearchIncludeHidden = false
+    @State private var homeClipboardHistory = true
+    @State private var homeFileSearch = true
+    @State private var homeSnippets = true
+    @State private var homeAICommands = true
+    @State private var homeAICommandIDs: [String] = []
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var selectedHotkey: String = "⌘ ⇧ Space"
     @State private var hasLoaded = false
@@ -32,6 +37,7 @@ struct SettingsView: View {
         case ai = "AI"
         case snippets = "Snippets"
         case fileSearch = "File Search"
+        case home = "Home Items"
         case aliases = "Aliases"
         case data = "Data"
         case about = "About"
@@ -43,6 +49,7 @@ struct SettingsView: View {
             case .ai: return "sparkle"
             case .snippets: return "text.quote"
             case .fileSearch: return "doc.text.magnifyingglass"
+            case .home: return "house"
             case .aliases: return "arrow.triangle.branch"
             case .data: return "folder"
             case .about: return "info.circle"
@@ -78,6 +85,15 @@ struct SettingsView: View {
                     case .ai: aiSection
                     case .snippets: snippetsSection
                     case .fileSearch: fileSearchSection
+                    case .home:
+                        HomeItemsSettingsView(
+                            clipboardHistory: $homeClipboardHistory,
+                            fileSearch: $homeFileSearch,
+                            snippets: $homeSnippets,
+                            aiCommands: $homeAICommands,
+                            selectedAICommandIDs: $homeAICommandIDs,
+                            aiEnabled: aiEnabled
+                        )
                     case .aliases: AliasSettingsView()
                     case .data: dataSection
                     case .about: aboutSection
@@ -101,6 +117,11 @@ struct SettingsView: View {
         .onChange(of: fileSearchPaths) { _, _ in saveConfig() }
         .onChange(of: fileSearchAllLocations) { _, _ in saveConfig() }
         .onChange(of: fileSearchIncludeHidden) { _, _ in saveConfig() }
+        .onChange(of: homeClipboardHistory) { _, _ in saveConfig() }
+        .onChange(of: homeFileSearch) { _, _ in saveConfig() }
+        .onChange(of: homeSnippets) { _, _ in saveConfig() }
+        .onChange(of: homeAICommands) { _, _ in saveConfig() }
+        .onChange(of: homeAICommandIDs) { _, _ in saveConfig() }
         .alert("Reset Rankings", isPresented: $showResetConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) {
@@ -524,7 +545,37 @@ struct SettingsView: View {
         if fileSearchPaths.isEmpty { fileSearchPaths = [NSHomeDirectory()] }
         fileSearchAllLocations = config["file_search_all_locations"] as? Bool ?? false
         fileSearchIncludeHidden = config["file_search_include_hidden"] as? Bool ?? false
+        homeClipboardHistory = config["home_clipboard_history"] as? Bool ?? true
+        homeFileSearch = config["home_file_search"] as? Bool ?? true
+        homeSnippets = config["home_snippets"] as? Bool ?? true
+        homeAICommands = config["home_ai_commands"] as? Bool ?? true
+
+        let availableCommands = AICommand.loadAll()
+        let availableIDs = Set(availableCommands.map(\.id))
+        let configuredIDs = config["home_ai_command_ids"] as? [String]
+        if let configuredIDs {
+            homeAICommandIDs = Array(configuredIDs.filter(availableIDs.contains).prefix(4))
+        } else {
+            homeAICommandIDs = availableCommands
+                .sorted { first, second in
+                    let firstScore = max(
+                        Int(rc_get_ranking("cmd-id:\(first.id)")),
+                        Int(rc_get_ranking("cmd:\(first.name)"))
+                    )
+                    let secondScore = max(
+                        Int(rc_get_ranking("cmd-id:\(second.id)")),
+                        Int(rc_get_ranking("cmd:\(second.name)"))
+                    )
+                    if firstScore != secondScore { return firstScore > secondScore }
+                    return first.name.localizedStandardCompare(second.name) == .orderedAscending
+                }
+                .prefix(4)
+                .map(\.id)
+        }
         hasLoaded = true
+        if configuredIDs == nil {
+            saveConfig() // Migrate legacy dynamic top-four behavior to stable IDs.
+        }
     }
 
     private func saveConfig() {
@@ -538,6 +589,11 @@ struct SettingsView: View {
             "file_search_paths": fileSearchPaths,
             "file_search_all_locations": fileSearchAllLocations,
             "file_search_include_hidden": fileSearchIncludeHidden,
+            "home_clipboard_history": homeClipboardHistory,
+            "home_file_search": homeFileSearch,
+            "home_snippets": homeSnippets,
+            "home_ai_commands": homeAICommands,
+            "home_ai_command_ids": homeAICommandIDs,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: config),
               let jsonStr = String(data: data, encoding: .utf8) else { return }
