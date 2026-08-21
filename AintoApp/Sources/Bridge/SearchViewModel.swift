@@ -332,6 +332,10 @@ final class SearchViewModel: ObservableObject {
     /// to avoid triggering SwiftUI re-renders on every arrow key press.
     var clipboardSelectedIndex: Int = 0
     private let clipboardPageSize = 50
+    /// Number of raw SQL rows consumed. This is intentionally separate from
+    /// `clipboardItems.count`, because rows duplicated by a concurrent insert
+    /// are discarded from the UI but still advance offset pagination.
+    private var clipboardFetchOffset = 0
     private(set) var clipboardHasMore = true
     var clipboardFilter: String = "" {
         didSet {
@@ -679,8 +683,10 @@ final class SearchViewModel: ObservableObject {
     /// Fetch the first page under the current text and type filters.
     private func reloadClipboardPage() {
         let query = debouncedClipboardFilter.isEmpty ? nil : debouncedClipboardFilter
-        clipboardItems = fetchClipboardItems(query: query, offset: 0)
-        clipboardHasMore = clipboardItems.count >= clipboardPageSize
+        let firstPage = fetchClipboardItems(query: query, offset: 0)
+        clipboardFetchOffset = firstPage.count
+        clipboardHasMore = firstPage.count >= clipboardPageSize
+        clipboardItems = deduplicatedClipboardItems(firstPage)
         clipboardSelectedIndex = 0
         rebuildFilteredClipboardItems()
     }
@@ -689,10 +695,29 @@ final class SearchViewModel: ObservableObject {
     func loadMoreClipboardItems() {
         guard clipboardHasMore else { return }
         let query = debouncedClipboardFilter.isEmpty ? nil : debouncedClipboardFilter
-        let newItems = fetchClipboardItems(query: query, offset: clipboardItems.count)
-        clipboardHasMore = newItems.count >= clipboardPageSize
-        clipboardItems.append(contentsOf: newItems)
+        var existingIDs = Set(clipboardItems.map(\.id))
+
+        // An insert between offset-based queries can shift a row into the next
+        // page. Consume duplicate-only pages until we find a new row or reach
+        // the end, while advancing by every raw row returned from SQLite.
+        while clipboardHasMore {
+            let page = fetchClipboardItems(query: query, offset: clipboardFetchOffset)
+            clipboardFetchOffset += page.count
+            clipboardHasMore = page.count >= clipboardPageSize
+
+            let uniquePage = page.filter { existingIDs.insert($0.id).inserted }
+            if !uniquePage.isEmpty {
+                clipboardItems.append(contentsOf: uniquePage)
+                break
+            }
+            if page.isEmpty { break }
+        }
         rebuildFilteredClipboardItems()
+    }
+
+    private func deduplicatedClipboardItems(_ items: [ClipboardItem]) -> [ClipboardItem] {
+        var seen = Set<Int64>()
+        return items.filter { seen.insert($0.id).inserted }
     }
 
     /// Fetch clipboard items from Rust/SQLite with optional search query.
