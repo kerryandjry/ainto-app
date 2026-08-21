@@ -3,8 +3,8 @@ import Carbon
 import AintoCore
 
 /// Global text expansion service.
-/// Monitors all keystrokes via CGEvent tap, matches snippet keywords using a Trie,
-/// and replaces them with expanded text.
+/// Monitors all keystrokes via CGEvent tap, matches snippet keywords against a
+/// rolling buffer, and replaces them with expanded text.
 ///
 /// Reference: GenSnippets (https://github.com/jaynguyen-vn/gen-snippets)
 ///
@@ -27,9 +27,6 @@ final class TextExpander {
 
     /// Snippet keyword → expansion mapping.
     private static var snippetMap: [String: String] = [:]
-
-    /// Trie for efficient keyword matching.
-    private static var trie = Trie()
 
     // MARK: - Public
 
@@ -87,13 +84,11 @@ final class TextExpander {
 
         Self.lock.lock()
         Self.snippetMap.removeAll()
-        Self.trie = Trie()
 
         for entry in entries {
             guard let keyword = entry["keyword"] as? String, !keyword.isEmpty,
                   let expansion = entry["expansion"] as? String else { continue }
             Self.snippetMap[keyword] = expansion
-            Self.trie.insert(keyword)
         }
         Self.lock.unlock()
     }
@@ -219,7 +214,7 @@ final class TextExpander {
         let maxLen = min(buffer.count, maxBufferLength)
         for len in stride(from: maxLen, through: 1, by: -1) {
             let suffix = String(buffer.suffix(len))
-            if trie.contains(suffix), let expansion = snippetMap[suffix] {
+            if let expansion = snippetMap[suffix] {
                 // Resolve placeholders
                 var resolved = expansion
                 let clipboardText = NSPasteboard.general.string(forType: .string)
@@ -274,34 +269,6 @@ final class TextExpander {
     }
 }
 
-// MARK: - Trie
-
-/// Simple Trie for efficient keyword exact matching.
-final class Trie {
-    private let root = TrieNode()
-
-    func insert(_ word: String) {
-        var node = root
-        for char in word {
-            if node.children[char] == nil {
-                node.children[char] = TrieNode()
-            }
-            guard let next = node.children[char] else { return }
-            node = next
-        }
-        node.isEnd = true
-    }
-
-    func contains(_ word: String) -> Bool {
-        var node = root
-        for char in word {
-            guard let next = node.children[char] else { return false }
-            node = next
-        }
-        return node.isEnd
-    }
-}
-
 /// Detects when macOS secure event input is active (password fields, etc.).
 /// Uses Carbon's IsSecureEventInputEnabled() — returns true when any app
 /// has enabled secure input (e.g., 1Password, Safari password fields).
@@ -309,9 +276,4 @@ enum SecureInput {
     static var isActive: Bool {
         IsSecureEventInputEnabled()
     }
-}
-
-private final class TrieNode {
-    var children: [Character: TrieNode] = [:]
-    var isEnd = false
 }
