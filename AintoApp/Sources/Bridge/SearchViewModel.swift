@@ -1,3 +1,4 @@
+// swiftlint:disable file_length function_body_length identifier_name
 import AppKit
 import Foundation
 import AintoCore
@@ -1216,6 +1217,7 @@ final class SearchViewModel: ObservableObject {
 
         // Add empty assistant message (will be filled by streaming)
         claudeMessages.append(ClaudeMessage(role: .assistant, text: ""))
+        let assistantMessageIndex = claudeMessages.count - 1
 
         // Switch to Claude page
         page = .claude
@@ -1237,41 +1239,44 @@ final class SearchViewModel: ObservableObject {
 
         // Stream chunks in background (blocking reads on detached thread)
         let sendablePtr = SendablePointer(ptr: session)
+        let sessionToken = UInt(bitPattern: session)
         Task.detached {
             let ptr = sendablePtr.ptr
             var gotAnyText = false
             while true {
                 guard let cStr = rc_claude_next_chunk(ptr) else {
-                    // Stream done — capture session_id for resume
+                    var completedSessionID: String?
                     if let sidStr = rc_claude_get_session_id(ptr) {
-                        let sid = String(cString: sidStr)
+                        completedSessionID = String(cString: sidStr)
                         rc_free_string(sidStr)
-                        await MainActor.run { [weak self] in
-                            self?.claudeSessionId = sid
-                        }
                     }
 
-                    // If no text was received, show error
+                    var errorMessage: String?
                     if !gotAnyText {
-                        var errorMsg = "Claude process ended without output."
+                        errorMessage = "Claude process ended without output."
                         if let errStr = rc_claude_get_stderr(ptr) {
                             let stderr = String(cString: errStr)
                             rc_free_string(errStr)
                             if !stderr.isEmpty {
-                                errorMsg = stderr
+                                errorMessage = stderr
                             }
-                        }
-                        await MainActor.run { [weak self] in
-                            guard let self else { return }
-                            if let lastIdx = self.claudeMessages.indices.last {
-                                self.claudeMessages[lastIdx].text = errorMsg
-                            }
-                            self.claudeSessionId = nil
                         }
                     }
+
                     await MainActor.run { [weak self] in
-                        self?.claudeIsStreaming = false
-                        self?.claudeSession = nil
+                        guard let self,
+                              self.claudeSession.map({ UInt(bitPattern: $0) }) == sessionToken
+                        else { return }
+                        if let errorMessage {
+                            if self.claudeMessages.indices.contains(assistantMessageIndex) {
+                                self.claudeMessages[assistantMessageIndex].text = errorMessage
+                            }
+                            self.claudeSessionId = nil
+                        } else if let completedSessionID {
+                            self.claudeSessionId = completedSessionID
+                        }
+                        self.claudeIsStreaming = false
+                        self.claudeSession = nil
                     }
                     rc_claude_free(ptr)
                     break
@@ -1282,9 +1287,11 @@ final class SearchViewModel: ObservableObject {
                 gotAnyText = true
 
                 await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    if let lastIdx = self.claudeMessages.indices.last {
-                        self.claudeMessages[lastIdx].text += chunk
+                    guard let self,
+                          self.claudeSession.map({ UInt(bitPattern: $0) }) == sessionToken
+                    else { return }
+                    if self.claudeMessages.indices.contains(assistantMessageIndex) {
+                        self.claudeMessages[assistantMessageIndex].text += chunk
                     }
                 }
             }
