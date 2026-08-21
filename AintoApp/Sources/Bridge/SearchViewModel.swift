@@ -26,7 +26,9 @@ struct AICommand: Identifiable {
 
         return entries.map { entry in
             AICommand(
-                id: entry["name"] as? String ?? UUID().uuidString,
+                // Rust fills in any missing id and rewrites the file, so this
+                // fallback only covers a genuinely malformed entry.
+                id: (entry["id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString,
                 name: entry["name"] as? String ?? "",
                 icon: entry["icon"] as? String ?? "sparkle",
                 prompt: entry["prompt"] as? String ?? ""
@@ -935,7 +937,7 @@ final class SearchViewModel: ObservableObject {
         // Never write over a file we could not read.
         guard aiCommandsLoaded else { return }
         let jsonArray: [[String: Any]] = aiCommands.map { cmd in
-            ["name": cmd.name, "icon": cmd.icon, "prompt": cmd.prompt]
+            ["id": cmd.id, "name": cmd.name, "icon": cmd.icon, "prompt": cmd.prompt]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: jsonArray),
               let jsonStr = String(data: data, encoding: .utf8) else { return }
@@ -966,10 +968,6 @@ final class SearchViewModel: ObservableObject {
             aiCommands[idx] = editing
         } else {
             aiCommands.append(editing)
-        }
-        // Update id to match name (used as stable identifier)
-        if let idx = aiCommands.firstIndex(where: { $0.id == editing.id }) {
-            aiCommands[idx].id = editing.name
         }
         saveAICommands()
         isEditingAICommand = false
