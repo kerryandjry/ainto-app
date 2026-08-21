@@ -18,6 +18,13 @@ const char* rc_config_load(void);
 int32_t rc_config_save(const char* json);
 
 // ============================================================
+// Calculator
+// ============================================================
+
+/// Evaluate a safe arithmetic expression and write its result.
+bool rc_calculate(const char* expression, double* out_result);
+
+// ============================================================
 // App Discovery & Search
 // ============================================================
 
