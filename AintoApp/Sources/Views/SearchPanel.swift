@@ -103,8 +103,12 @@ final class SearchPanel: NSPanel {
     /// Display used on the previous presentation. Moving within the same display
     /// is preserved, while invoking from another display follows the mouse.
     private var lastPresentedScreenFrame: NSRect?
+    /// Invalidates delayed sizing passes from an older presentation.
+    private var presentationGeneration: UInt = 0
 
     func showPanel() {
+        presentationGeneration &+= 1
+        let generation = presentationGeneration
         // Alias editing activates Ainto. Preserve the last external app so
         // actions still return to the user's actual target application.
         if let frontmost = NSWorkspace.shared.frontmostApplication,
@@ -131,13 +135,11 @@ final class SearchPanel: NSPanel {
         // Do NOT call NSApp.activate — keep the previous app focused
         makeKeyAndOrderFront(nil)
         // SwiftUI does not run its update pass for a window that is ordered
-        // out, so content that arrived while the panel was hidden reaches the
-        // view only now — after the sizing above already measured the old
-        // layout. Measure again once this turn of the run loop has let that
-        // update land.
-        DispatchQueue.main.async { [weak self] in
-            self?.sizeToFitContent()
-        }
+        // out. A single next-run-loop measurement can still race that update,
+        // so remeasure for a few bounded presentation passes. The generation
+        // and visibility checks prevent a hidden or newer presentation from
+        // being resized by an older callback.
+        schedulePostPresentationSizing(for: generation)
         viewModel.selectAll()
         // Pick up apps installed/removed since the last time the panel opened.
         viewModel.refreshApps()
@@ -203,8 +205,22 @@ final class SearchPanel: NSPanel {
     /// A window that is ordered out is not laid out, so content that grew while
     /// it was hidden — a Claude answer that arrived after the user switched
     /// away — leaves the window at its old size and the top of the view clipped
-    /// off. Forcing layout here picks the growth up before it is on screen.
+    /// off. The bounded passes below let SwiftUI publish that layout after the
+    /// panel becomes visible without leaving a background sizing loop running.
+    private func schedulePostPresentationSizing(for generation: UInt) {
+        for delay in [0.0, 0.05, 0.15] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self,
+                      self.isVisible,
+                      self.presentationGeneration == generation else { return }
+                self.sizeToFitContent()
+            }
+        }
+    }
+
     private func sizeToFitContent() {
+        hostingView.invalidateIntrinsicContentSize()
+        hostingView.needsLayout = true
         hostingView.layoutSubtreeIfNeeded()
         let fitting = hostingView.fittingSize
         guard fitting.width > 1, fitting.height > 1 else { return }
