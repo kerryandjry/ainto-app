@@ -1,11 +1,11 @@
 import XCTest
-#if SWIFT_PACKAGE
-// pi-lens-ignore: SourceKit
+#if canImport(AintoApp)
 @testable import AintoApp
-#else
+#elseif canImport(Ainto)
 @testable import Ainto
 #endif
 
+#if canImport(AintoApp) || canImport(Ainto)
 @MainActor
 final class LauncherNavigationTests: XCTestCase {
     func testPendingSystemActionDoesNotSurviveHidingThePanel() {
@@ -164,3 +164,4 @@ final class LauncherNavigationTests: XCTestCase {
         return viewModel
     }
 }
+#endif
