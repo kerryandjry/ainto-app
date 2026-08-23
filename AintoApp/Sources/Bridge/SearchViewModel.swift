@@ -579,10 +579,19 @@ final class SearchViewModel: ObservableObject {
     /// height is about to change with the page.
     @discardableResult
     func popToRootIfStale(hiddenFor interval: TimeInterval) -> Bool {
-        guard page != .main else { return false }
+        guard popToRootSeconds >= 0, interval >= TimeInterval(popToRootSeconds) else { return false }
+
+        if page == .main {
+            // An ordinary app-search query is ephemeral; reopening after the
+            // configured delay starts a new search. Preserve an unsent prompt
+            // in AI mode because it may contain authored text.
+            guard searchMode == .apps, !query.isEmpty else { return false }
+            resetMainSearch()
+            return true
+        }
+
         guard !isEditingSnippet, !isEditingAICommand, !claudeIsStreaming else { return false }
         guard page != .claude || query.isEmpty else { return false }
-        guard popToRootSeconds >= 0, interval >= TimeInterval(popToRootSeconds) else { return false }
         popToRoot()
         return true
     }
@@ -591,6 +600,10 @@ final class SearchViewModel: ObservableObject {
     /// with the search page.
     private func popToRoot() {
         goBack()
+        resetMainSearch()
+    }
+
+    private func resetMainSearch() {
         query = ""
         selectedIndex = 0
         results = buildDefaultResults()

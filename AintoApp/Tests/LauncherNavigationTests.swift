@@ -52,6 +52,52 @@ final class LauncherNavigationTests: XCTestCase {
         XCTAssertEqual(viewModel.page, .main)
     }
 
+    func testStaleRootAppSearchIsClearedAtConfiguredDelay() {
+        let viewModel = makeViewModel(page: .main, delay: 90)
+        viewModel.searchMode = .apps
+        viewModel.query = "unfinished filter"
+
+        XCTAssertFalse(viewModel.popToRootIfStale(hiddenFor: 89))
+        XCTAssertEqual(viewModel.query, "unfinished filter")
+
+        XCTAssertTrue(viewModel.popToRootIfStale(hiddenFor: 90))
+        XCTAssertEqual(viewModel.page, .main)
+        XCTAssertTrue(viewModel.query.isEmpty)
+    }
+
+    func testEmptyRootSearchDoesNotPop() {
+        let viewModel = makeViewModel(page: .main, delay: 90)
+
+        XCTAssertFalse(viewModel.popToRootIfStale(hiddenFor: 90))
+        XCTAssertEqual(viewModel.page, .main)
+    }
+
+    func testUnsentRootAIPromptSurvivesStalePanel() {
+        let viewModel = makeViewModel(page: .main, delay: 90)
+        viewModel.searchMode = .claude
+        viewModel.query = "unfinished prompt"
+
+        XCTAssertFalse(viewModel.popToRootIfStale(hiddenFor: 90))
+        XCTAssertEqual(viewModel.searchMode, .claude)
+        XCTAssertEqual(viewModel.query, "unfinished prompt")
+    }
+
+    func testZeroDelayClearsRootAppSearchImmediately() {
+        let viewModel = makeViewModel(page: .main, delay: 0)
+        viewModel.query = "filter"
+
+        XCTAssertTrue(viewModel.popToRootIfStale(hiddenFor: 0))
+        XCTAssertTrue(viewModel.query.isEmpty)
+    }
+
+    func testNegativeDelayPreservesRootAppSearch() {
+        let viewModel = makeViewModel(page: .main, delay: -1)
+        viewModel.query = "filter"
+
+        XCTAssertFalse(viewModel.popToRootIfStale(hiddenFor: 86_400))
+        XCTAssertEqual(viewModel.query, "filter")
+    }
+
     func testPopToRootWaitsForConfiguredDelay() {
         let viewModel = makeViewModel(page: .clipboard, delay: 90)
         viewModel.query = "stale query"
