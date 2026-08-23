@@ -81,7 +81,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(self)?;
+        let content = annotate(toml::to_string_pretty(self)?);
         std::fs::write(path, content)?;
         Ok(())
     }
@@ -90,6 +90,28 @@ impl Config {
     pub fn default_path() -> Result<PathBuf, Error> {
         config_dir().map(|d| d.join("config.toml"))
     }
+}
+
+/// Comment written above `pop_to_root_seconds`, whose meaning is not obvious
+/// from the number alone — and whose two sentinel values are not discoverable
+/// at all without being told.
+const POP_TO_ROOT_COMMENT: &str = "\
+# How long the launcher may stay on a sub-page — clipboard, snippets, AI
+# commands, Claude — after being hidden. Reopening after longer than this
+# returns to the search page and clears the query; reopening sooner picks up
+# where you left off.
+# 0 always returns to search, a negative value never does.
+";
+
+/// serde writes no comments, so add them back as the file is serialized.
+///
+/// Kept separate from `save`, which writes to the real config path and so
+/// cannot be exercised by a test.
+fn annotate(content: String) -> String {
+    content.replace(
+        "pop_to_root_seconds =",
+        &format!("{POP_TO_ROOT_COMMENT}pop_to_root_seconds ="),
+    )
 }
 
 /// Returns the ainto config directory: `~/.config/ainto/`
@@ -158,6 +180,19 @@ ai_enabled = true
         let decoded: Config = toml::from_str(&encoded).unwrap();
         assert_eq!(decoded, config);
         assert_eq!(config.pop_to_root_seconds, 90);
+    }
+
+    #[test]
+    fn the_written_file_explains_pop_to_root_and_still_parses() {
+        let written = annotate(toml::to_string_pretty(&Config::default()).unwrap());
+
+        assert!(written.contains("# 0 always returns to search"));
+        // The comment must sit above the key, not somewhere harmless.
+        let comment = written.find("# How long the launcher").unwrap();
+        let key = written.find("pop_to_root_seconds =").unwrap();
+        assert!(comment < key);
+        // And it must not stop the file being readable.
+        assert_eq!(toml::from_str::<Config>(&written).unwrap(), Config::default());
     }
 
     #[test]
