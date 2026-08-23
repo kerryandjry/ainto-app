@@ -16,9 +16,15 @@ final class SearchPanel: NSPanel {
     /// round trip from returning to a launcher left open on a sub-page.
     private var hiddenAt: Date?
 
-    /// Set between a pop-to-root and the resize it triggers, so the panel is
-    /// placed once its new height is known rather than the outgoing page's.
-    private var awaitingPopResize = false
+    /// Where the user wants the panel on each display, as a top-left corner in
+    /// screen coordinates. Tracked per display so dragging it on one screen is
+    /// still remembered after invoking it on another, and tracked by the
+    /// top-left rather than the origin because an NSWindow's origin is its
+    /// bottom-left corner, which moves whenever a page change changes the
+    /// panel's height.
+    private var preferredTopLeftByDisplay: [CGDirectDisplayID: NSPoint] = [:]
+    /// Guards `windowDidMove` against recording our own corrective moves.
+    private var isRestoringPosition = false
 
     /// Floating action panel window.
     private var actionWindow: NSWindow?
@@ -115,17 +121,23 @@ final class SearchPanel: NSPanel {
         viewModel.loadAICommands()
 
         // Must follow loadAISettings, which refreshes the configured delay.
-        if let hiddenAt, viewModel.popToRootIfStale(hiddenFor: Date().timeIntervalSince(hiddenAt)) {
-            // Place now in case the height does not change, and again from
-            // windowDidResize once SwiftUI has laid the new page out.
-            awaitingPopResize = true
-            lastPresentedScreenFrame = nil
+        if let hiddenAt {
+            viewModel.popToRootIfStale(hiddenFor: Date().timeIntervalSince(hiddenAt))
         }
 
         positionOnMouseScreenIfNeeded()
+        sizeToFitContent()
 
         // Do NOT call NSApp.activate — keep the previous app focused
         makeKeyAndOrderFront(nil)
+        // SwiftUI does not run its update pass for a window that is ordered
+        // out, so content that arrived while the panel was hidden reaches the
+        // view only now — after the sizing above already measured the old
+        // layout. Measure again once this turn of the run loop has let that
+        // update land.
+        DispatchQueue.main.async { [weak self] in
+            self?.sizeToFitContent()
+        }
         viewModel.selectAll()
         // Pick up apps installed/removed since the last time the panel opened.
         viewModel.refreshApps()
@@ -135,9 +147,6 @@ final class SearchPanel: NSPanel {
         hideActionPanel()
         viewModel.prepareForPanelHide()
         hiddenAt = Date()
-        // Never carry a pending re-place into the next time the panel is shown;
-        // an unrelated resize would then move it.
-        awaitingPopResize = false
         // If the user dragged the panel, remember the display it actually
         // occupied so the next invocation can still follow the mouse.
         if let screen {
@@ -157,15 +166,69 @@ final class SearchPanel: NSPanel {
         guard lastPresentedScreenFrame == nil || targetChanged || !panelIsOnTarget else { return }
 
         let visibleFrame = targetScreen.visibleFrame
-        let proposedX = visibleFrame.midX - frame.width / 2
+        // Somewhere the panel has already been placed or dragged on this
+        // display wins over the default spot: moving to a second screen and
+        // back should not forget where it was put on the first.
+        let remembered = displayID(of: targetScreen).flatMap { preferredTopLeftByDisplay[$0] }
+        let proposedX = remembered?.x ?? (visibleFrame.midX - frame.width / 2)
         // Place the panel's center roughly one quarter down from the top.
-        let proposedY = visibleFrame.maxY - visibleFrame.height * 0.25 - frame.height / 2
+        let proposedY = remembered.map { $0.y - frame.height }
+            ?? (visibleFrame.maxY - visibleFrame.height * 0.25 - frame.height / 2)
         let maxX = max(visibleFrame.minX, visibleFrame.maxX - frame.width)
         let maxY = max(visibleFrame.minY, visibleFrame.maxY - frame.height)
         let x = min(max(proposedX, visibleFrame.minX), maxX)
         let y = min(max(proposedY, visibleFrame.minY), maxY)
+        isRestoringPosition = true
         setFrameOrigin(NSPoint(x: x, y: y))
+        isRestoringPosition = false
+        if remembered == nil {
+            remember(topLeft: NSPoint(x: x, y: y + frame.height), on: targetScreen)
+        }
         lastPresentedScreenFrame = targetScreen.frame
+    }
+
+    private func displayID(of screen: NSScreen?) -> CGDirectDisplayID? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        guard let number = screen?.deviceDescription[key] as? NSNumber else { return nil }
+        return CGDirectDisplayID(number.uint32Value)
+    }
+
+    private func remember(topLeft: NSPoint, on screen: NSScreen?) {
+        guard let id = displayID(of: screen) else { return }
+        preferredTopLeftByDisplay[id] = topLeft
+    }
+
+    /// Size the panel to its content before showing it.
+    ///
+    /// A window that is ordered out is not laid out, so content that grew while
+    /// it was hidden — a Claude answer that arrived after the user switched
+    /// away — leaves the window at its old size and the top of the view clipped
+    /// off. Forcing layout here picks the growth up before it is on screen.
+    private func sizeToFitContent() {
+        hostingView.layoutSubtreeIfNeeded()
+        let fitting = hostingView.fittingSize
+        guard fitting.width > 1, fitting.height > 1 else { return }
+        guard abs(fitting.height - frame.height) > 0.5
+            || abs(fitting.width - frame.width) > 0.5 else { return }
+        setContentSize(fitting)
+    }
+
+    /// Put the panel's top-left corner back where the user left it, clamped to
+    /// the display it is on. A taller page then grows downward instead of
+    /// sliding the whole panel down the screen.
+    private func restorePreferredTopLeft() {
+        let host = screen ?? NSScreen.main
+        guard let preferred = displayID(of: host).flatMap({ preferredTopLeftByDisplay[$0] })
+        else { return }
+        var x = preferred.x
+        var y = preferred.y - frame.height
+        if let bounds = host?.visibleFrame {
+            x = min(max(x, bounds.minX), max(bounds.minX, bounds.maxX - frame.width))
+            y = min(max(y, bounds.minY), max(bounds.minY, bounds.maxY - frame.height))
+        }
+        isRestoringPosition = true
+        setFrameOrigin(NSPoint(x: x, y: y))
+        isRestoringPosition = false
     }
 
     /// Invoke a saved target shortcut using the same behavior as selecting it in search.
@@ -597,9 +660,13 @@ extension SearchPanel: NSWindowDelegate {
     /// placement done while popping ran against the outgoing page's height.
     /// Place it again now that the new height is known.
     func windowDidResize(_ notification: Notification) {
-        guard awaitingPopResize else { return }
-        awaitingPopResize = false
-        lastPresentedScreenFrame = nil
-        positionOnMouseScreenIfNeeded()
+        restorePreferredTopLeft()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        // The user dragged the panel: that corner is the one to keep from now
+        // on, including across the height changes a page switch brings.
+        guard !isRestoringPosition else { return }
+        remember(topLeft: NSPoint(x: frame.minX, y: frame.maxY), on: screen)
     }
 }
