@@ -543,14 +543,16 @@ final class SearchViewModel: ObservableObject {
     /// next invocation is a new task rather than a continuation of the last one.
     ///
     /// Held back whenever popping would throw work away: a half-written snippet
-    /// or AI command that has not been saved, or a Claude response still
-    /// streaming. Those stay put however long the panel was hidden.
+    /// or AI command that has not been saved, a Claude response still
+    /// streaming, or an unsent Claude follow-up. Those stay put however long
+    /// the panel was hidden.
     /// Returns whether it popped, so the caller can re-place a panel whose
     /// height is about to change with the page.
     @discardableResult
     func popToRootIfStale(hiddenFor interval: TimeInterval) -> Bool {
         guard page != .main else { return false }
         guard !isEditingSnippet, !isEditingAICommand, !claudeIsStreaming else { return false }
+        guard page != .claude || query.isEmpty else { return false }
         guard popToRootSeconds >= 0, interval >= TimeInterval(popToRootSeconds) else { return false }
         popToRoot()
         return true
