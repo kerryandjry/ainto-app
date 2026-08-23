@@ -507,7 +507,7 @@ struct SettingsView: View {
         // would be reset every time Settings opened, with no interaction at
         // all: loading the view assigns to each @State, and each of those
         // saves on change.
-        var config = configOnDisk()
+        guard var config = configOnDisk() else { return }
         config["clipboard_max_items"] = clipboardMaxItems
         config["clipboard_max_image_items"] = clipboardMaxImageItems
         config["claude_binary"] = claudeBinary
@@ -519,16 +519,16 @@ struct SettingsView: View {
     }
 
     /// The config as the core currently has it, so a save can preserve keys
-    /// this view does not manage. Empty when it cannot be read — the core
+    /// this view does not manage. Returns nil when it cannot be read — the core
     /// returns NULL for a file that failed to parse, and replacing that with
     /// defaults is exactly what must not happen.
-    private func configOnDisk() -> [String: Any] {
-        guard let cStr = rc_config_load() else { return [:] }
+    private func configOnDisk() -> [String: Any]? {
+        guard let cStr = rc_config_load() else { return nil }
         let jsonStr = String(cString: cStr)
         rc_free_string(cStr)
         guard let data = jsonStr.data(using: .utf8),
               let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return [:] }
+        else { return nil }
         return config
     }
 
