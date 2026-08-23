@@ -40,13 +40,16 @@ final class LauncherNavigationTests: XCTestCase {
         XCTAssertEqual(viewModel.page, .clipboard)
     }
 
-    func testFileSearchSurvivesHidingThePanel() {
-        let viewModel = SearchViewModel()
-        viewModel.page = .fileSearch
+    func testFileSearchUsesTheConfiguredPopDelay() {
+        let viewModel = makeViewModel(page: .fileSearch, delay: 90)
 
         viewModel.prepareForPanelHide()
-
         XCTAssertEqual(viewModel.page, .fileSearch)
+        XCTAssertFalse(viewModel.popToRootIfStale(hiddenFor: 89))
+        XCTAssertEqual(viewModel.page, .fileSearch)
+
+        XCTAssertTrue(viewModel.popToRootIfStale(hiddenFor: 90))
+        XCTAssertEqual(viewModel.page, .main)
     }
 
     func testPopToRootWaitsForConfiguredDelay() {
