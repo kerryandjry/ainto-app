@@ -5,8 +5,8 @@ import AintoCore
 import ServiceManagement
 import Sparkle
 
-/// Settings — clean sidebar + card-based content.
 // pi-lens-ignore: type_body_length
+/// Settings — clean sidebar + card-based content.
 struct SettingsView: View {
     var hotkeyManager: HotkeyManager?
 
