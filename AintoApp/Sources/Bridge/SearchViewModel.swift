@@ -312,8 +312,9 @@ final class SearchViewModel: ObservableObject {
 
     /// Seconds the launcher may stay on a sub-page while hidden before the next
     /// invocation returns to search. `0` returns immediately; a negative value
-    /// stays put. Mirrors `pop_to_root_seconds` in config.toml.
-    private var popToRootSeconds: Int = 90
+    /// stays put. Mirrors `pop_to_root_seconds` in config.toml. Internal so
+    /// navigation tests can exercise the immediate and never sentinel values.
+    var popToRootSeconds: Int = 90
 
     // AI Commands state
     @Published var aiCommands: [AICommand] = []
@@ -462,12 +463,14 @@ final class SearchViewModel: ObservableObject {
     /// or AI command that has not been saved, a Claude response still
     /// streaming, or an unsent Claude follow-up. Those stay put however long
     /// the panel was hidden.
-    func popToRootIfStale(hiddenFor interval: TimeInterval) {
-        guard page != .main else { return }
-        guard !isEditingSnippet, !isEditingAICommand, !claudeIsStreaming else { return }
-        guard page != .claude || query.isEmpty else { return }
-        guard popToRootSeconds >= 0, interval >= TimeInterval(popToRootSeconds) else { return }
+    @discardableResult
+    func popToRootIfStale(hiddenFor interval: TimeInterval) -> Bool {
+        guard page != .main else { return false }
+        guard !isEditingSnippet, !isEditingAICommand, !claudeIsStreaming else { return false }
+        guard page != .claude || query.isEmpty else { return false }
+        guard popToRootSeconds >= 0, interval >= TimeInterval(popToRootSeconds) else { return false }
         popToRoot()
+        return true
     }
 
     /// `goBack()` plus the query, so a stale search string does not come back
