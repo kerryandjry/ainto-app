@@ -501,16 +501,35 @@ struct SettingsView: View {
 
     private func saveConfig() {
         guard hasLoaded else { return }
-        let config: [String: Any] = [
-            "clipboard_max_items": clipboardMaxItems,
-            "clipboard_max_image_items": clipboardMaxImageItems,
-            "claude_binary": claudeBinary,
-            "ai_enabled": aiEnabled,
-            "snippets_enabled": snippetsEnabled,
-        ]
+        // Start from what the core currently holds. Sending only the fields
+        // below leaves anything else out of the JSON, and the core fills those
+        // in from `Config::default()` — so a setting this view has no UI for
+        // would be reset every time Settings opened, with no interaction at
+        // all: loading the view assigns to each @State, and each of those
+        // saves on change.
+        var config = configOnDisk()
+        config["clipboard_max_items"] = clipboardMaxItems
+        config["clipboard_max_image_items"] = clipboardMaxImageItems
+        config["claude_binary"] = claudeBinary
+        config["ai_enabled"] = aiEnabled
+        config["snippets_enabled"] = snippetsEnabled
         guard let data = try? JSONSerialization.data(withJSONObject: config),
               let jsonStr = String(data: data, encoding: .utf8) else { return }
         let _ = rc_config_save(jsonStr)
+    }
+
+    /// The config as the core currently has it, so a save can preserve keys
+    /// this view does not manage. Empty when it cannot be read — the core
+    /// returns NULL for a file that failed to parse, and replacing that with
+    /// defaults is exactly what must not happen.
+    private func configOnDisk() -> [String: Any] {
+        guard let cStr = rc_config_load() else { return [:] }
+        let jsonStr = String(cString: cStr)
+        rc_free_string(cStr)
+        guard let data = jsonStr.data(using: .utf8),
+              let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [:] }
+        return config
     }
 
     /// Apply clipboard limits to the running store so the change takes effect
