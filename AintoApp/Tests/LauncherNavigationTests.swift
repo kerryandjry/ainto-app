@@ -39,4 +39,15 @@ final class LauncherNavigationTests: XCTestCase {
 
         XCTAssertEqual(viewModel.page, .clipboard)
     }
+
+    func testUnsentClaudeFollowUpSurvivesStalePanel() {
+        let viewModel = SearchViewModel()
+        viewModel.page = .claude
+        viewModel.query = "unfinished follow-up"
+
+        XCTAssertFalse(viewModel.popToRootIfStale(hiddenFor: 91))
+
+        XCTAssertEqual(viewModel.page, .claude)
+        XCTAssertEqual(viewModel.query, "unfinished follow-up")
+    }
 }
