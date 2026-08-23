@@ -97,8 +97,6 @@ final class SearchPanel: NSPanel {
     private var presentationGeneration: UInt = 0
 
     func showPanel() {
-        presentationGeneration &+= 1
-        let generation = presentationGeneration
         // Remember the currently focused app before showing
         previousApp = NSWorkspace.shared.frontmostApplication
 
@@ -125,24 +123,26 @@ final class SearchPanel: NSPanel {
         sizeToFitContent()
 
         // Do NOT call NSApp.activate — keep the previous app focused
-        makeKeyAndOrderFront(nil)
-        // SwiftUI does not run its update pass for a window that is ordered
-        // out. A single next-run-loop measurement can still race that update,
-        // so remeasure for a few bounded presentation passes. The generation
-        // and visibility checks prevent a hidden or newer presentation from
-        // being resized by an older callback.
-        schedulePostPresentationSizing(for: generation)
+        presentPanel()
         viewModel.selectAll()
         // Pick up apps installed/removed since the last time the panel opened.
         viewModel.refreshApps()
     }
 
-    /// Size the panel to its content before showing it.
-    ///
+    /// Show the panel and schedule bounded sizing passes for content that
+    /// SwiftUI could not lay out while the window was hidden. Selection capture
+    /// also uses this path because its completion changes the page immediately
+    /// after presenting the panel.
+    private func presentPanel() {
+        presentationGeneration &+= 1
+        let generation = presentationGeneration
+        makeKeyAndOrderFront(nil)
+        schedulePostPresentationSizing(for: generation)
+    }
+
     /// A window that is ordered out is not laid out, so content that grew while
-    /// it was hidden — a Claude answer that arrived after the user switched
-    /// away — leaves the window at its old size with the top of the view
-    /// clipped off. Forcing layout here picks that growth up.
+    /// it was hidden can leave the window at its old size. A single next-run-loop
+    /// measurement can still race SwiftUI, so use a few bounded passes.
     private func schedulePostPresentationSizing(for generation: UInt) {
         for delay in [0.0, 0.05, 0.15] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -239,8 +239,9 @@ final class SearchPanel: NSPanel {
                     pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
                 }
 
-                // Re-show panel and call back
-                self.makeKeyAndOrderFront(nil)
+                // Re-show through the deferred sizing path; the completion can
+                // immediately replace the visible page with Claude.
+                self.presentPanel()
                 completion(selection)
             }
         }
