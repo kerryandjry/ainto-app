@@ -158,6 +158,8 @@ struct SearchResult: Identifiable {
     var alternateAction: (() -> Void)? // Cmd+Enter, used by Instant Answers
     var instantAnswerID: String?
     var instantAnswerIsPending = false
+    var isProcessSearchCandidate = false
+    var isProcessKillConfirmation = false
     var keepsPanelOpenAfterAction = false
 
     /// Resolved icon: app icon or SF Symbol fallback
@@ -371,9 +373,22 @@ final class SearchViewModel: ObservableObject {
     private var iconCache: [String: NSImage] = [:]
     private let instantAnswerService = InstantAnswerService()
     private var instantAnswerTask: Task<Void, Never>?
+    // Internal so the focused process-search extension can own the behavior
+    // without adding another large concern to this already broad view model.
+    var processSearchTask: Task<Void, Never>?
+    var processSearchGeneration: UUID?
+    var processCandidates: [ProcessCandidate] = []
+    var pendingProcessKill: ProcessCandidate?
+    var processConfirmationToken: UUID?
 
     /// Callback to hide panel and paste to frontmost app (set by SearchPanel)
     var onPasteAndHide: (() -> Void)?
+
+    /// Called after SIGKILL was successfully sent (set by SearchPanel).
+    var onProcessKillCompleted: (() -> Void)?
+
+    /// Dismisses an action panel whose closures belong to old search results.
+    var onSearchResultsWillChange: (() -> Void)?
 
     /// Callback to move clipboard table selection (set by ClipboardTableView).
     /// Bypasses @Published to avoid SwiftUI re-render on every arrow key.
@@ -391,6 +406,12 @@ final class SearchViewModel: ObservableObject {
     }
 
     func clearQuery() {
+        processSearchTask?.cancel()
+        processSearchTask = nil
+        processSearchGeneration = nil
+        pendingProcessKill = nil
+        processConfirmationToken = nil
+        processCandidates = []
         query = ""
         results = []
         selectedIndex = 0
@@ -465,6 +486,10 @@ final class SearchViewModel: ObservableObject {
     }
 
     func prepareForPanelHide() {
+        processSearchTask?.cancel()
+        processSearchTask = nil
+        processSearchGeneration = nil
+        _ = cancelPendingProcessKillIfNeeded()
         guard page == .fileSearch else { return }
         fileSearch.clear()
         page = .main
@@ -501,11 +526,25 @@ final class SearchViewModel: ObservableObject {
     // MARK: - Main search
 
     func performSearch(query: String) {
+        onSearchResultsWillChange?()
         instantAnswerTask?.cancel()
         instantAnswerTask = nil
+        processSearchTask?.cancel()
+        processSearchTask = nil
+        processSearchGeneration = nil
+        pendingProcessKill = nil
+        processConfirmationToken = nil
+        processCandidates = []
         guard !query.isEmpty else {
             results = buildDefaultResults()
             selectedIndex = 0
+            return
+        }
+
+        // `kill` remains a normal app/alias query. Only `kill ` (with a
+        // trailing space) reserves inline process search.
+        if let processTerm = ProcessSearchService.searchTerm(for: query) {
+            scheduleProcessSearch(for: processTerm, originalQuery: query)
             return
         }
 

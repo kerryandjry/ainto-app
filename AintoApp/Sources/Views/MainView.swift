@@ -158,7 +158,12 @@ struct MainView: View {
                         KeyHint(keys: ["↑", "↓"], label: "navigate")
                         if viewModel.results.indices.contains(viewModel.selectedIndex) {
                             let selectedResult = viewModel.results[viewModel.selectedIndex]
-                            if selectedResult.instantAnswerIsPending {
+                            if selectedResult.isProcessKillConfirmation {
+                                KeyHint(keys: ["⌘", "↵"], label: "force kill")
+                                KeyHint(keys: ["esc"], label: "cancel")
+                            } else if selectedResult.isProcessSearchCandidate {
+                                KeyHint(keys: ["↵"], label: "prepare force kill")
+                            } else if selectedResult.instantAnswerIsPending {
                                 KeyHint(keys: ["…"], label: "fetching")
                             } else if selectedResult.alternateAction != nil {
                                 KeyHint(keys: ["⌘", "↵"], label: "paste")
@@ -170,7 +175,9 @@ struct MainView: View {
                             }
                         }
                     }
-                    if !viewModel.query.isEmpty {
+                    if !viewModel.query.isEmpty
+                        && !(viewModel.results.indices.contains(viewModel.selectedIndex)
+                            && viewModel.results[viewModel.selectedIndex].isProcessKillConfirmation) {
                         KeyHint(keys: ["esc"], label: "clear")
                     }
                     if viewModel.aiEnabled {

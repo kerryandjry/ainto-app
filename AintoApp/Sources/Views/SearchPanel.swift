@@ -75,6 +75,8 @@ final class SearchPanel: NSPanel {
         }
         viewModel.fileSearch.onOpen = { [weak self] in self?.hidePanel() }
         viewModel.onSystemActionCompleted = { [weak self] in self?.hidePanel() }
+        viewModel.onProcessKillCompleted = { [weak self] in self?.hidePanel() }
+        viewModel.onSearchResultsWillChange = { [weak self] in self?.hideActionPanel() }
 
         viewModel.loadAISettings()
     }
@@ -372,10 +374,15 @@ final class SearchPanel: NSPanel {
                     return nil
                 }
                 if self.viewModel.page == .main,
-                   self.viewModel.results.indices.contains(self.viewModel.selectedIndex),
-                   let alternateAction = self.viewModel.results[self.viewModel.selectedIndex].alternateAction {
-                    alternateAction()
-                    return nil
+                   self.viewModel.results.indices.contains(self.viewModel.selectedIndex) {
+                    let selectedResult = self.viewModel.results[self.viewModel.selectedIndex]
+                    if selectedResult.isProcessKillConfirmation && event.isARepeat {
+                        return nil
+                    }
+                    if let alternateAction = selectedResult.alternateAction {
+                        alternateAction()
+                        return nil
+                    }
                 }
             }
 
@@ -485,7 +492,9 @@ final class SearchPanel: NSPanel {
                 }
                 return nil
             case 53: // Escape
-                if self.viewModel.page != .main {
+                if self.viewModel.cancelPendingProcessKillIfNeeded() {
+                    return nil
+                } else if self.viewModel.page != .main {
                     self.viewModel.goBack()
                 } else if self.viewModel.query.isEmpty {
                     self.hidePanel()
