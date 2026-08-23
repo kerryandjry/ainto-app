@@ -40,6 +40,15 @@ final class LauncherNavigationTests: XCTestCase {
         XCTAssertEqual(viewModel.page, .clipboard)
     }
 
+    func testFileSearchSurvivesHidingThePanel() {
+        let viewModel = SearchViewModel()
+        viewModel.page = .fileSearch
+
+        viewModel.prepareForPanelHide()
+
+        XCTAssertEqual(viewModel.page, .fileSearch)
+    }
+
     func testPopToRootWaitsForConfiguredDelay() {
         let viewModel = makeViewModel(page: .clipboard, delay: 90)
         viewModel.query = "stale query"
