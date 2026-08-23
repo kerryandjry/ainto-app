@@ -31,6 +31,10 @@ pub struct Config {
     pub home_ai_commands: bool,
     /// Stable AI Command UUIDs selected for Home. None preserves legacy top-four behavior.
     pub home_ai_command_ids: Option<Vec<String>>,
+    /// Seconds the launcher may stay on a sub-page while hidden before the next
+    /// invocation returns to the search page. `0` returns immediately; a
+    /// negative value stays on the sub-page indefinitely.
+    pub pop_to_root_seconds: i64,
 }
 
 impl Default for Config {
@@ -51,6 +55,7 @@ impl Default for Config {
             home_snippets: true,
             home_ai_commands: true,
             home_ai_command_ids: None,
+            pop_to_root_seconds: 90,
         }
     }
 }
@@ -121,6 +126,9 @@ ai_enabled = true
         assert!(config.home_snippets);
         assert!(config.home_ai_commands);
         assert!(config.home_ai_command_ids.is_none());
+        // Existing installs have no `pop_to_root_seconds`; they must land on the
+        // default rather than on 0, which would pop back to search immediately.
+        assert_eq!(config.pop_to_root_seconds, 90);
     }
 
     #[test]
@@ -149,5 +157,21 @@ ai_enabled = true
         let encoded = toml::to_string(&config).unwrap();
         let decoded: Config = toml::from_str(&encoded).unwrap();
         assert_eq!(decoded, config);
+        assert_eq!(config.pop_to_root_seconds, 90);
+    }
+
+    #[test]
+    fn pop_to_root_settings_round_trip() {
+        // 0 and negative values are the "immediately" and "never" choices, so
+        // they must survive a save/load cycle as written rather than being
+        // normalised into the default.
+        for seconds in [0, 45, 90, -1] {
+            let config = Config {
+                pop_to_root_seconds: seconds,
+                ..Config::default()
+            };
+            let decoded: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+            assert_eq!(decoded.pop_to_root_seconds, seconds);
+        }
     }
 }
