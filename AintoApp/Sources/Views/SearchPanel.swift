@@ -63,6 +63,8 @@ final class SearchPanel: NSPanel {
             ])
         }
 
+        self.delegate = self
+
         // Wire up the paste action
         viewModel.onPasteAndHide = { [weak self] in
             self?.pasteToFrontmostApp()
@@ -78,6 +80,13 @@ final class SearchPanel: NSPanel {
 
     /// Whether the user has ever positioned the panel manually.
     private var hasUserPosition = false
+    /// Where the panel belongs, as its top-left corner in screen coordinates.
+    /// Tracked instead of the origin because an NSWindow's origin is its
+    /// bottom-left corner, which moves whenever a page change gives the panel a
+    /// different height.
+    private var preferredTopLeft: NSPoint?
+    /// Guards `windowDidMove` against recording our own corrective moves.
+    private var isRestoringPosition = false
 
     func showPanel() {
         // Remember the currently focused app before showing
@@ -95,16 +104,60 @@ final class SearchPanel: NSPanel {
                 let screenFrame = screen.visibleFrame
                 let x = screenFrame.midX - frame.width / 2
                 let y = screenFrame.maxY - (screenFrame.height * 0.25)
+                isRestoringPosition = true
                 setFrameOrigin(NSPoint(x: x, y: y))
+                isRestoringPosition = false
+                preferredTopLeft = NSPoint(x: x, y: y + frame.height)
             }
             hasUserPosition = true
         }
 
+        sizeToFitContent()
+
         // Do NOT call NSApp.activate — keep the previous app focused
         makeKeyAndOrderFront(nil)
+        // SwiftUI does not run its update pass for a window that is ordered
+        // out, so content that arrived while the panel was hidden reaches the
+        // view only now — after the sizing above already measured the old
+        // layout. Measure again once this turn of the run loop has let that
+        // update land.
+        DispatchQueue.main.async { [weak self] in
+            self?.sizeToFitContent()
+        }
         viewModel.selectAll()
         // Pick up apps installed/removed since the last time the panel opened.
         viewModel.refreshApps()
+    }
+
+    /// Size the panel to its content before showing it.
+    ///
+    /// A window that is ordered out is not laid out, so content that grew while
+    /// it was hidden — a Claude answer that arrived after the user switched
+    /// away — leaves the window at its old size with the top of the view
+    /// clipped off. Forcing layout here picks that growth up.
+    private func sizeToFitContent() {
+        hostingView.layoutSubtreeIfNeeded()
+        let fitting = hostingView.fittingSize
+        guard fitting.width > 1, fitting.height > 1 else { return }
+        guard abs(fitting.height - frame.height) > 0.5
+            || abs(fitting.width - frame.width) > 0.5 else { return }
+        setContentSize(fitting)
+    }
+
+    /// Put the panel's top-left corner back where it was, clamped to the
+    /// display it is on, so a taller page grows downward instead of sliding the
+    /// whole panel down the screen.
+    private func restorePreferredTopLeft() {
+        guard let preferredTopLeft else { return }
+        var x = preferredTopLeft.x
+        var y = preferredTopLeft.y - frame.height
+        if let bounds = (screen ?? NSScreen.main)?.visibleFrame {
+            x = min(max(x, bounds.minX), max(bounds.minX, bounds.maxX - frame.width))
+            y = min(max(y, bounds.minY), max(bounds.minY, bounds.maxY - frame.height))
+        }
+        isRestoringPosition = true
+        setFrameOrigin(NSPoint(x: x, y: y))
+        isRestoringPosition = false
     }
 
     func hidePanel() {
@@ -477,5 +530,18 @@ final class SearchPanel: NSPanel {
     override func orderOut(_ sender: Any?) {
         removeKeyMonitor()
         super.orderOut(sender)
+    }
+}
+
+extension SearchPanel: NSWindowDelegate {
+    func windowDidResize(_ notification: Notification) {
+        restorePreferredTopLeft()
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        // The user dragged the panel: that corner is the one to keep, including
+        // across the height changes a page switch brings.
+        guard !isRestoringPosition else { return }
+        preferredTopLeft = NSPoint(x: frame.minX, y: frame.maxY)
     }
 }
