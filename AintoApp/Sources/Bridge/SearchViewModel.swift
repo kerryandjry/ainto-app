@@ -348,8 +348,9 @@ final class SearchViewModel: ObservableObject {
 
     /// Seconds the launcher may stay on a sub-page while hidden before the next
     /// invocation returns to search. `0` returns immediately; a negative value
-    /// stays put. Mirrors `pop_to_root_seconds` in config.toml.
-    private var popToRootSeconds: Int = 90
+    /// stays put. Mirrors `pop_to_root_seconds` in config.toml. Internal so
+    /// navigation tests can exercise the immediate and never sentinel values.
+    var popToRootSeconds: Int = 90
 
     // AI Commands state
     private var aiCommandsLoaded = false
