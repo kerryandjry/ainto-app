@@ -310,6 +310,11 @@ final class SearchViewModel: ObservableObject {
     // Agent CLI binary to spawn for AI sessions (config: claude_binary).
     var claudeBinary: String = "claude"
 
+    /// Seconds the launcher may stay on a sub-page while hidden before the next
+    /// invocation returns to search. `0` returns immediately; a negative value
+    /// stays put. Mirrors `pop_to_root_seconds` in config.toml.
+    private var popToRootSeconds: Int = 90
+
     // AI Commands state
     @Published var aiCommands: [AICommand] = []
     @Published var aiCommandSelectedIndex: Int = 0
@@ -448,6 +453,28 @@ final class SearchViewModel: ObservableObject {
         // TextField is always in the view hierarchy (ZStack), so focus immediately.
         // selectAll is chained after focus succeeds to avoid race conditions.
         focusFilterField(then: { [weak self] in self?.selectAll() })
+    }
+
+    /// Return to search when the launcher has been hidden long enough that the
+    /// next invocation is a new task rather than a continuation of the last one.
+    ///
+    /// Held back whenever popping would throw work away: a half-written snippet
+    /// or AI command that has not been saved, or a Claude response still
+    /// streaming. Those stay put however long the panel was hidden.
+    func popToRootIfStale(hiddenFor interval: TimeInterval) {
+        guard page != .main else { return }
+        guard !isEditingSnippet, !isEditingAICommand, !claudeIsStreaming else { return }
+        guard popToRootSeconds >= 0, interval >= TimeInterval(popToRootSeconds) else { return }
+        popToRoot()
+    }
+
+    /// `goBack()` plus the query, so a stale search string does not come back
+    /// with the search page.
+    private func popToRoot() {
+        goBack()
+        query = ""
+        selectedIndex = 0
+        results = buildDefaultResults()
     }
 
     // MARK: - Main search
@@ -900,6 +927,7 @@ final class SearchViewModel: ObservableObject {
               let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         aiEnabled = config["ai_enabled"] as? Bool ?? true
         claudeBinary = (config["claude_binary"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "claude"
+        popToRootSeconds = config["pop_to_root_seconds"] as? Int ?? 90
         exitAISurfacesIfDisabled()
     }
 

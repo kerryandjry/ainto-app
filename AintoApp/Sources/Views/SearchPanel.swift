@@ -11,6 +11,9 @@ final class SearchPanel: NSPanel {
 
     /// The app that was frontmost before we showed the panel.
     private var previousApp: NSRunningApplication?
+    /// When the panel was last hidden, so the next invocation can tell a quick
+    /// round trip from returning to a launcher left open on a sub-page.
+    private var hiddenAt: Date?
 
     /// Floating action panel window.
     private var actionWindow: NSWindow?
@@ -86,6 +89,11 @@ final class SearchPanel: NSPanel {
         // Pick up any Settings change to the AI master switch.
         viewModel.loadAISettings()
 
+        // Must follow loadAISettings, which refreshes the configured delay.
+        if let hiddenAt {
+            viewModel.popToRootIfStale(hiddenFor: Date().timeIntervalSince(hiddenAt))
+        }
+
         if !hasUserPosition {
             let screen = NSScreen.screens.first(where: {
                 NSMouseInRect(NSEvent.mouseLocation, $0.frame, false)
@@ -109,6 +117,7 @@ final class SearchPanel: NSPanel {
 
     func hidePanel() {
         hideActionPanel()
+        hiddenAt = Date()
         orderOut(nil)
     }
 
