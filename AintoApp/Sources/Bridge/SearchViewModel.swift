@@ -138,6 +138,42 @@ enum SelectionCaptureResult {
     case failure(String)
 }
 
+struct HomeItemConfiguration: Equatable {
+    let clipboardHistory: Bool
+    let fileSearch: Bool
+    let snippets: Bool
+    let aiCommands: Bool
+
+    /// Hide built-in Home items until config has loaded successfully. This
+    /// prevents a transient read failure at launch or wake from exposing every
+    /// item after the user explicitly hid them.
+    static let hidden = HomeItemConfiguration(
+        clipboardHistory: false,
+        fileSearch: false,
+        snippets: false,
+        aiCommands: false
+    )
+
+    init(config: [String: Any]) {
+        clipboardHistory = config["home_clipboard_history"] as? Bool ?? true
+        fileSearch = config["home_file_search"] as? Bool ?? true
+        snippets = config["home_snippets"] as? Bool ?? true
+        aiCommands = config["home_ai_commands"] as? Bool ?? true
+    }
+
+    private init(
+        clipboardHistory: Bool,
+        fileSearch: Bool,
+        snippets: Bool,
+        aiCommands: Bool
+    ) {
+        self.clipboardHistory = clipboardHistory
+        self.fileSearch = fileSearch
+        self.snippets = snippets
+        self.aiCommands = aiCommands
+    }
+}
+
 /// An action available for a search result.
 struct ActionItem: Identifiable {
     let id = UUID()
@@ -337,10 +373,7 @@ final class SearchViewModel: ObservableObject {
 
     // Home visibility is independent from searchability. These values only
     // affect the empty-query list; search, aliases, and shortcuts remain active.
-    private var homeClipboardHistory = true
-    private var homeFileSearch = true
-    private var homeSnippets = true
-    private var homeAICommands = true
+    private var homeItems = HomeItemConfiguration.hidden
     private var homeAICommandIDs: Set<String>?
 
     // Agent CLI binary to spawn for AI sessions (config: claude_binary).
@@ -1178,23 +1211,31 @@ final class SearchViewModel: ObservableObject {
     /// Load AI settings (`ai_enabled` master switch and the agent CLI binary)
     /// from config.toml. Called at startup and each time the panel opens, so
     /// changes in Settings take effect the next time the launcher is shown.
-    func loadAISettings() {
-        guard let cStr = rc_config_load() else { return }
+    @discardableResult
+    func loadAISettings() -> Bool {
+        guard let cStr = rc_config_load() else { return false }
         let jsonStr = String(cString: cStr)
         rc_free_string(cStr)
         guard let data = jsonStr.data(using: .utf8),
-              let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+              let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
         aiEnabled = config["ai_enabled"] as? Bool ?? true
         claudeBinary = (config["claude_binary"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "claude"
-        homeClipboardHistory = config["home_clipboard_history"] as? Bool ?? true
-        homeFileSearch = config["home_file_search"] as? Bool ?? true
-        homeSnippets = config["home_snippets"] as? Bool ?? true
-        homeAICommands = config["home_ai_commands"] as? Bool ?? true
+        homeItems = HomeItemConfiguration(config: config)
         homeAICommandIDs = (config["home_ai_command_ids"] as? [String]).map(Set.init)
         reloadAliases()
         fileSearch.reloadConfiguration()
         popToRootSeconds = config["pop_to_root_seconds"] as? Int ?? 90
         exitAISurfacesIfDisabled()
+        return true
+    }
+
+    /// Reload launcher-wide configuration after config changes or system wake.
+    /// Refresh an already-visible empty Home page instead of waiting for the
+    /// next ordinary panel presentation to rebuild it.
+    func reloadLauncherConfiguration() {
+        guard loadAISettings(), page == .main, query.isEmpty else { return }
+        results = buildDefaultResults()
+        selectedIndex = min(selectedIndex, max(0, results.count - 1))
     }
 
     /// When AI is disabled, leave any active AI surface (Claude chat or the AI
@@ -1431,7 +1472,7 @@ final class SearchViewModel: ObservableObject {
         }
 
         // Built-in commands. Home visibility does not affect normal search.
-        if homeClipboardHistory {
+        if homeItems.clipboardHistory {
             results.append(SearchResult(
                 title: "Clipboard History",
                 subtitle: "Command",
@@ -1441,11 +1482,11 @@ final class SearchViewModel: ObservableObject {
             ) { [weak self] in self?.goToClipboard() })
         }
 
-        if homeFileSearch {
+        if homeItems.fileSearch {
             results.append(fileSearchCommandResult(score: 0))
         }
 
-        if homeSnippets {
+        if homeItems.snippets {
             results.append(SearchResult(
                 title: "Snippets",
                 subtitle: "Command",
@@ -1455,7 +1496,7 @@ final class SearchViewModel: ObservableObject {
         }
 
         // AI surfaces — hidden entirely when the AI master switch is off.
-        if aiEnabled && homeAICommands {
+        if aiEnabled && homeItems.aiCommands {
             results.append(SearchResult(
                 title: "AI Commands",
                 subtitle: "Command",

@@ -100,6 +100,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .shortcutRecordingDidEnd,
             object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(workspaceDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
 
         // Watch ~/.config/ainto/ for external file changes (e.g. manual TOML edits)
         watchConfigDirectory()
@@ -197,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Covers both the Settings toggle (saved via rc_config_save)
             // and manual TOML edits.
             applySnippetsEnabled()
+            searchPanel?.viewModel.reloadLauncherConfiguration()
         } else if name == "aliases.toml" {
             searchPanel?.viewModel.reloadAliases()
             aliasHotkeyManager?.reload()
@@ -231,6 +238,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
     }
 
+    @objc private func workspaceDidWake(_ notification: Notification) {
+        searchPanel?.viewModel.reloadLauncherConfiguration()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         clipboardMonitor?.stopMonitoring()
         textExpander?.stop()
@@ -238,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configWatchers.removeAll()
         configDirectoryWatcher?.cancel()
         configDirectoryWatcher = nil
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
     private func toggleSearchPanel() {
