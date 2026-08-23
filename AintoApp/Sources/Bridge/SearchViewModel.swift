@@ -545,11 +545,15 @@ final class SearchViewModel: ObservableObject {
     /// Held back whenever popping would throw work away: a half-written snippet
     /// or AI command that has not been saved, or a Claude response still
     /// streaming. Those stay put however long the panel was hidden.
-    func popToRootIfStale(hiddenFor interval: TimeInterval) {
-        guard page != .main else { return }
-        guard !isEditingSnippet, !isEditingAICommand, !claudeIsStreaming else { return }
-        guard popToRootSeconds >= 0, interval >= TimeInterval(popToRootSeconds) else { return }
+    /// Returns whether it popped, so the caller can re-place a panel whose
+    /// height is about to change with the page.
+    @discardableResult
+    func popToRootIfStale(hiddenFor interval: TimeInterval) -> Bool {
+        guard page != .main else { return false }
+        guard !isEditingSnippet, !isEditingAICommand, !claudeIsStreaming else { return false }
+        guard popToRootSeconds >= 0, interval >= TimeInterval(popToRootSeconds) else { return false }
         popToRoot()
+        return true
     }
 
     /// `goBack()` plus the query, so a stale search string does not come back

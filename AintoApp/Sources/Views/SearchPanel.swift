@@ -16,6 +16,10 @@ final class SearchPanel: NSPanel {
     /// round trip from returning to a launcher left open on a sub-page.
     private var hiddenAt: Date?
 
+    /// Set between a pop-to-root and the resize it triggers, so the panel is
+    /// placed once its new height is known rather than the outgoing page's.
+    private var awaitingPopResize = false
+
     /// Floating action panel window.
     private var actionWindow: NSWindow?
     private var actionSelectedIndex = 0
@@ -73,6 +77,8 @@ final class SearchPanel: NSPanel {
             ])
         }
 
+        self.delegate = self
+
         // Wire up the paste action
         viewModel.onPasteAndHide = { [weak self] in
             self?.pasteToFrontmostApp()
@@ -109,8 +115,11 @@ final class SearchPanel: NSPanel {
         viewModel.loadAICommands()
 
         // Must follow loadAISettings, which refreshes the configured delay.
-        if let hiddenAt {
-            viewModel.popToRootIfStale(hiddenFor: Date().timeIntervalSince(hiddenAt))
+        if let hiddenAt, viewModel.popToRootIfStale(hiddenFor: Date().timeIntervalSince(hiddenAt)) {
+            // Place now in case the height does not change, and again from
+            // windowDidResize once SwiftUI has laid the new page out.
+            awaitingPopResize = true
+            lastPresentedScreenFrame = nil
         }
 
         positionOnMouseScreenIfNeeded()
@@ -126,6 +135,9 @@ final class SearchPanel: NSPanel {
         hideActionPanel()
         viewModel.prepareForPanelHide()
         hiddenAt = Date()
+        // Never carry a pending re-place into the next time the panel is shown;
+        // an unrelated resize would then move it.
+        awaitingPopResize = false
         // If the user dragged the panel, remember the display it actually
         // occupied so the next invocation can still follow the mouse.
         if let screen {
@@ -577,5 +589,17 @@ final class SearchPanel: NSPanel {
     override func orderOut(_ sender: Any?) {
         removeKeyMonitor()
         super.orderOut(sender)
+    }
+}
+
+extension SearchPanel: NSWindowDelegate {
+    /// SwiftUI resizes the panel a layout pass after the page changes, so the
+    /// placement done while popping ran against the outgoing page's height.
+    /// Place it again now that the new height is known.
+    func windowDidResize(_ notification: Notification) {
+        guard awaitingPopResize else { return }
+        awaitingPopResize = false
+        lastPresentedScreenFrame = nil
+        positionOnMouseScreenIfNeeded()
     }
 }
