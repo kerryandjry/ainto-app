@@ -55,7 +55,7 @@
 
 - File Search uses Spotlight metadata; Ainto never recursively crawls your disk.
 - Full Disk Access controls permission and does not silently expand the configured search scope.
-- Process termination is opt-in: only `kill ` activates Process Search, Return arms a candidate, and `⌘↵` confirms. Ainto revalidates PID, owner, executable path, and start time immediately before signalling and excludes protected system processes.
+- Process termination is opt-in: only `kill` followed by a space activates Process Search; exact `kill` remains ordinary search. Return arms a candidate, and `⌘↵` confirms. Ainto revalidates PID, owner, executable path, and start time immediately before signalling and excludes protected system processes.
 - Clipboard and snippet data stay under `~/.config/ainto/`. Clipboard representations are preserved when Ainto temporarily pastes generated text.
 - There is no telemetry, Electron runtime, WebView, or bundled AI inference service.
 

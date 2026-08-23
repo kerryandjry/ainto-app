@@ -53,7 +53,7 @@
 
 - 檔案搜尋使用 Spotlight metadata；Ainto 不會遞迴爬取磁碟。
 - Full Disk Access 只控制權限，不會暗中擴大設定好的搜尋範圍。
-- 終止行程必須明確選擇：只有 `kill ` 會啟動 Process Search，Return 進入準備狀態，`⌘↵` 才會確認。送出 signal 前會重新驗證 PID、擁有者、執行檔路徑與啟動時間，並排除受保護的系統行程。
+- 終止行程必須明確選擇：只有 `kill` 後接空格才會啟動 Process Search；單獨輸入 `kill` 仍是一般搜尋。Return 進入準備狀態，`⌘↵` 才會確認。送出 signal 前會重新驗證 PID、擁有者、執行檔路徑與啟動時間，並排除受保護的系統行程。
 - 剪貼簿與文字片段資料都保存在 `~/.config/ainto/`。Ainto 暫時貼上產生的文字時，會保留原本的剪貼簿 representations。
 - 沒有遙測、Electron runtime、WebView 或內建 AI inference service。
 
