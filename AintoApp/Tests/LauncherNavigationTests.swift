@@ -1,5 +1,6 @@
 import XCTest
 #if SWIFT_PACKAGE
+// pi-lens-ignore: SourceKit
 @testable import AintoApp
 #else
 @testable import Ainto
