@@ -632,7 +632,7 @@ private extension SettingsView {
         // `Config::default()` — silently resetting any setting this view does
         // not manage. `pop_to_root_seconds`, which is edited straight in
         // config.toml, was reset to its default every time Settings opened.
-        var config = configOnDisk()
+        guard var config = configOnDisk() else { return }
         config["clipboard_max_items"] = clipboardMaxItems
         config["clipboard_max_image_items"] = clipboardMaxImageItems
         config["claude_binary"] = claudeBinary
@@ -653,17 +653,16 @@ private extension SettingsView {
     }
 
     /// The config as the core currently has it, so a save can preserve keys
-    /// this view does not manage. Empty when it cannot be read — the core
+    /// this view does not manage. Returns nil when it cannot be read — the core
     /// returns NULL for a file that failed to parse, and overwriting that with
-    /// defaults is exactly what must not happen, so callers keep their own
-    /// values rather than inventing any.
-    private func configOnDisk() -> [String: Any] {
-        guard let cStr = rc_config_load() else { return [:] }
+    /// defaults is exactly what must not happen.
+    private func configOnDisk() -> [String: Any]? {
+        guard let cStr = rc_config_load() else { return nil }
         let jsonStr = String(cString: cStr)
         rc_free_string(cStr)
         guard let data = jsonStr.data(using: .utf8),
               let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return [:] }
+        else { return nil }
         return config
     }
 
