@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var snippetsEnabled: Bool = true
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var selectedHotkey: String = "⌘ ⇧ Space"
+    @State private var popToRootSeconds: Int = 90
     @State private var hasLoaded = false
     @State private var selectedSection: SettingsSection = .general
     @State private var showResetConfirm = false
@@ -87,6 +88,7 @@ struct SettingsView: View {
         .onChange(of: claudeBinary) { _, _ in saveConfig() }
         .onChange(of: aiEnabled) { _, _ in saveConfig() }
         .onChange(of: snippetsEnabled) { _, _ in saveConfig() }
+        .onChange(of: popToRootSeconds) { _, _ in saveConfig() }
         .alert("Reset Rankings", isPresented: $showResetConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) {
@@ -132,6 +134,19 @@ struct SettingsView: View {
 
                     Divider().opacity(0.3)
 
+                    SettingsRow(label: "Return to search") {
+                        Picker("", selection: $popToRootSeconds) {
+                            ForEach(popToRootOptions, id: \.self) { seconds in
+                                Text(Self.popToRootLabel(seconds)).tag(seconds)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: 190)
+                    }
+
+                    Divider().opacity(0.3)
+
                     SettingsRow(label: "Launch at login") {
                         Toggle("", isOn: $launchAtLogin)
                             .labelsHidden()
@@ -150,7 +165,33 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            Text("Reopening the launcher after longer than this returns to the search page instead of the clipboard, snippet, AI command or Claude page it was left on.")
+                .font(.system(size: 12))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 4)
         }
+    }
+
+    private static let popToRootPresets = [0, 10, 30, 60, 90, 300, -1]
+
+    /// Presets plus whatever is currently configured. A value typed straight
+    /// into config.toml has to stay selectable, or opening Settings would
+    /// quietly round it to the nearest preset and save that.
+    private var popToRootOptions: [Int] {
+        var options = Self.popToRootPresets
+        guard !options.contains(popToRootSeconds) else { return options }
+        options.insert(popToRootSeconds, at: max(0, options.count - 1))
+        return options
+    }
+
+    private static func popToRootLabel(_ seconds: Int) -> String {
+        if seconds < 0 { return "Never" }
+        if seconds == 0 { return "Immediately" }
+        if seconds < 60 { return "After \(seconds) seconds" }
+        if seconds == 60 { return "After 1 minute" }
+        if seconds % 60 == 0 { return "After \(seconds / 60) minutes" }
+        return "After \(seconds) seconds"
     }
 
     // MARK: - Clipboard
@@ -496,6 +537,7 @@ struct SettingsView: View {
         claudeBinary = config["claude_binary"] as? String ?? "claude"
         aiEnabled = config["ai_enabled"] as? Bool ?? true
         snippetsEnabled = config["snippets_enabled"] as? Bool ?? true
+        popToRootSeconds = config["pop_to_root_seconds"] as? Int ?? 90
         hasLoaded = true
     }
 
@@ -507,6 +549,7 @@ struct SettingsView: View {
             "claude_binary": claudeBinary,
             "ai_enabled": aiEnabled,
             "snippets_enabled": snippetsEnabled,
+            "pop_to_root_seconds": popToRootSeconds,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: config),
               let jsonStr = String(data: data, encoding: .utf8) else { return }
