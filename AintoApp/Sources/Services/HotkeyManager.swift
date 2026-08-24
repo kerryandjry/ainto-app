@@ -7,6 +7,11 @@ extension Notification.Name {
     static let shortcutRecordingDidEnd = Notification.Name("app.ainto.shortcutRecordingDidEnd")
 }
 
+enum ShortcutRecordingInfo {
+    static let keyCode = "keyCode"
+    static let modifierFlags = "modifierFlags"
+}
+
 /// Hotkey configuration — maps display string to Key + Modifiers.
 struct HotkeyConfig: Sendable {
     let displayName: String

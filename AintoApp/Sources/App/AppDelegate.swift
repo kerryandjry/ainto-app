@@ -3,8 +3,12 @@ import SwiftUI
 import AintoCore
 import Sparkle
 
+extension Notification.Name {
+    static let settingsWindowDidOpen = Notification.Name("app.ainto.settingsWindowDidOpen")
+}
+
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var searchPanel: SearchPanel?
     private var hotkeyManager: HotkeyManager?
     private var aliasHotkeyManager: AliasHotkeyManager?
@@ -150,16 +154,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         aliasHotkeyManager?.suspend()
     }
 
-    @objc private func shortcutRecordingDidEnd() {
-        // Wait until the recorded physical key is released. Registering a key-up
-        // handler immediately can execute an existing shortcut while editing it.
+    @objc private func shortcutRecordingDidEnd(_ notification: Notification) {
+        let keyCode = (notification.userInfo?[ShortcutRecordingInfo.keyCode] as? NSNumber)
+            .map { CGKeyCode($0.uint32Value) }
+        let recordedFlags = CGEventFlags(
+            rawValue: (notification.userInfo?[ShortcutRecordingInfo.modifierFlags] as? NSNumber)?
+                .uint64Value ?? 0
+        )
+        resumeShortcutManagersWhenReleased(
+            keyCode: keyCode,
+            recordedFlags: recordedFlags,
+            attemptsRemaining: 100
+        )
+    }
+
+    private func resumeShortcutManagersWhenReleased(
+        keyCode: CGKeyCode?,
+        recordedFlags: CGEventFlags,
+        attemptsRemaining: Int
+    ) {
+        shortcutResumeWorkItem?.cancel()
+
+        let keyIsDown = keyCode.map {
+            CGEventSource.keyState(.combinedSessionState, key: $0)
+        } ?? false
+        let currentFlags = CGEventSource.flagsState(.combinedSessionState)
+        let modifiersAreDown = !currentFlags.intersection(recordedFlags).isEmpty
+        if (!keyIsDown && !modifiersAreDown) || attemptsRemaining == 0 {
+            hotkeyManager?.resume()
+            aliasHotkeyManager?.resume()
+            shortcutResumeWorkItem = nil
+            return
+        }
+
         let workItem = DispatchWorkItem { [weak self] in
-            self?.hotkeyManager?.resume()
-            self?.aliasHotkeyManager?.resume()
-            self?.shortcutResumeWorkItem = nil
+            self?.resumeShortcutManagersWhenReleased(
+                keyCode: keyCode,
+                recordedFlags: recordedFlags,
+                attemptsRemaining: attemptsRemaining - 1
+            )
         }
         shortcutResumeWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03, execute: workItem)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -181,6 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let window = settingsWindow {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
+            NotificationCenter.default.post(name: .settingsWindowDidOpen, object: window)
             return
         }
 
@@ -194,6 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.contentView = hostingView
         window.isReleasedWhenClosed = false
+        window.delegate = self
         window.title = "Settings"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -220,6 +258,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow = window
+        NotificationCenter.default.post(name: .settingsWindowDidOpen, object: window)
+    }
+
+    func windowDidResignKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        window.makeFirstResponder(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, window === settingsWindow else { return }
+        window.makeFirstResponder(nil)
     }
 
     private func initializeRustCore() {

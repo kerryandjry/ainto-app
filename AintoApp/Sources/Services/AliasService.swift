@@ -102,6 +102,47 @@ enum AliasSaveError: Error {
     }
 }
 
+struct AliasSettingsDraft {
+    private(set) var aliases: [LauncherAlias]
+    private var savedAliases: [LauncherAlias]
+
+    init(savedAliases: [LauncherAlias] = []) {
+        aliases = savedAliases
+        self.savedAliases = savedAliases
+    }
+
+    mutating func reload(_ savedAliases: [LauncherAlias]) {
+        aliases = savedAliases
+        self.savedAliases = savedAliases
+    }
+
+    @discardableResult
+    mutating func commit(
+        _ candidate: [LauncherAlias],
+        save: ([LauncherAlias]) -> Result<Void, AliasSaveError> = AliasStore.save
+    ) -> Result<Void, AliasSaveError> {
+        let normalized = candidate.map { entry in
+            var entry = entry
+            entry.alias = entry.alias.trimmingCharacters(in: .whitespacesAndNewlines)
+            return entry
+        }
+        if let validationError = AliasStore.validate(normalized) {
+            aliases = savedAliases
+            return .failure(.validation(validationError))
+        }
+
+        let result = save(normalized)
+        switch result {
+        case .success:
+            aliases = normalized
+            savedAliases = normalized
+        case .failure:
+            aliases = savedAliases
+        }
+        return result
+    }
+}
+
 enum AliasStore {
     static func normalize(_ value: String) -> String {
         value
