@@ -37,6 +37,11 @@ let package = Package(
                 .linkedFramework("SystemConfiguration"),
             ]
         ),
+        .testTarget(
+            name: "AintoAppTests",
+            dependencies: ["AintoApp"],
+            path: "Tests"
+        ),
     ]
 )
 

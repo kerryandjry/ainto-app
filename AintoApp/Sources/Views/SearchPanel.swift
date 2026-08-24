@@ -1,3 +1,4 @@
+// swiftlint:disable type_body_length function_body_length cyclomatic_complexity identifier_name
 import AppKit
 import SwiftUI
 
@@ -80,6 +81,9 @@ final class SearchPanel: NSPanel {
         viewModel.onGrabSelection = { [weak self] completion in
             self?.grabSelectionFromPreviousApp(completion: completion)
         }
+        viewModel.onFocusRequest = { [weak self] selectAll, completion in
+            self?.requestFocus(selectAll: selectAll, completion: completion)
+        }
 
         viewModel.loadAISettings()
     }
@@ -95,6 +99,8 @@ final class SearchPanel: NSPanel {
     private var isRestoringPosition = false
     /// Invalidates delayed sizing passes from an older presentation.
     private var presentationGeneration: UInt = 0
+    /// Invalidates responder retries from an older presentation or page.
+    private var focusGeneration: UInt = 0
 
     func showPanel() {
         // Remember the currently focused app before showing
@@ -154,6 +160,97 @@ final class SearchPanel: NSPanel {
         }
     }
 
+    func requestFocus(selectAll: Bool, completion: (() -> Void)? = nil) {
+        focusGeneration &+= 1
+        let generation = focusGeneration
+        let page = viewModel.page
+        DispatchQueue.main.async { [weak self] in
+            self?.attemptFocus(
+                generation: generation,
+                page: page,
+                selectAll: selectAll,
+                completion: completion,
+                attemptsRemaining: 8
+            )
+        }
+    }
+
+    private func attemptFocus(
+        generation: UInt,
+        page: LauncherPage,
+        selectAll: Bool,
+        completion: (() -> Void)?,
+        attemptsRemaining: Int
+    ) {
+        guard generation == focusGeneration,
+              viewModel.page == page,
+              isVisible else { return }
+
+        hostingView.layoutSubtreeIfNeeded()
+        if isKeyWindow,
+           let textField = primaryTextField(for: page),
+           makeFirstResponder(textField),
+           let editor = textField.currentEditor(),
+           firstResponder === editor {
+            if selectAll {
+                editor.selectAll(nil)
+            }
+            completion?()
+            return
+        }
+
+        guard attemptsRemaining > 1 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.attemptFocus(
+                generation: generation,
+                page: page,
+                selectAll: selectAll,
+                completion: completion,
+                attemptsRemaining: attemptsRemaining - 1
+            )
+        }
+    }
+
+    private func primaryTextField(for page: LauncherPage) -> NSTextField? {
+        let fields = visibleEditableTextFields(in: contentView)
+        let placeholder: String? = switch page {
+        case .main:
+            viewModel.searchMode == .claude ? "Ask Claude anything..." : "Search..."
+        case .clipboard:
+            "Type to filter entries..."
+        case .snippets:
+            viewModel.isEditingSnippet ? "Snippet name" : "Filter snippets..."
+        case .aiCommands:
+            viewModel.isEditingAICommand ? "Command name" : "Filter commands..."
+        case .claude:
+            "Follow up..."
+        }
+        guard let placeholder else { return nil }
+        return fields.first(where: { $0.placeholderString == placeholder })
+    }
+
+    private func visibleEditableTextFields(in view: NSView?) -> [NSTextField] {
+        guard let view, !view.isHidden, view.alphaValue > 0 else { return [] }
+        var fields: [NSTextField] = []
+        if let textField = view as? NSTextField,
+           textField.isEditable,
+           textField.isEnabled,
+           textField.window === self {
+            fields.append(textField)
+        }
+        for subview in view.subviews {
+            fields.append(contentsOf: visibleEditableTextFields(in: subview))
+        }
+        return fields
+    }
+
+    var focusedTextFieldPlaceholderForTesting: String? {
+        visibleEditableTextFields(in: contentView).first(where: { textField in
+            guard let editor = textField.currentEditor() else { return false }
+            return firstResponder === editor
+        })?.placeholderString
+    }
+
     private func sizeToFitContent() {
         hostingView.invalidateIntrinsicContentSize()
         hostingView.needsLayout = true
@@ -183,6 +280,7 @@ final class SearchPanel: NSPanel {
 
     func hidePanel() {
         hideActionPanel()
+        focusGeneration &+= 1
         orderOut(nil)
     }
 
@@ -239,10 +337,11 @@ final class SearchPanel: NSPanel {
                     pasteboard.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
                 }
 
-                // Re-show through the deferred sizing path; the completion can
-                // immediately replace the visible page with Claude.
-                self.presentPanel()
+                // Apply the page transition while hidden, then present and
+                // focus the resulting page rather than the outgoing one.
                 completion(selection)
+                self.presentPanel()
+                self.viewModel.focusFilterField()
             }
         }
     }

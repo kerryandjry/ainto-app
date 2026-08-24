@@ -91,9 +91,6 @@ struct MainView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
-            .onAppear {
-                viewModel.focusFilterField()
-            }
 
             // Results list (hidden in Claude mode)
             if !viewModel.results.isEmpty && viewModel.searchMode == .apps {
@@ -169,14 +166,6 @@ struct MainView: View {
         .fixedSize(horizontal: false, vertical: true)
         .onChange(of: viewModel.query) { _, newValue in
             viewModel.performSearch(query: newValue)
-        }
-        .onChange(of: viewModel.shouldSelectAll) { _, shouldSelect in
-            if shouldSelect {
-                viewModel.focusFilterField(then: {
-                    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-                })
-                viewModel.shouldSelectAll = false
-            }
         }
     }
 }
