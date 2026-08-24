@@ -57,6 +57,7 @@ struct SessionIo {
     reader: BufReader<std::process::ChildStdout>,
     response: String,
     session_id: Option<String>,
+    terminal_result: Option<ResultEvent>,
     streaming: bool,
 }
 
@@ -161,6 +162,7 @@ impl ClaudeSession {
                 reader: BufReader::new(stdout),
                 response: String::new(),
                 session_id: None,
+                terminal_result: None,
                 streaming: true,
             }),
             control: Control {
@@ -199,6 +201,19 @@ impl ClaudeSession {
                         io.response.push_str(&text);
                         return Some(text);
                     }
+                    // A result is the protocol's terminal event. Do not wait
+                    // for stdout EOF: a wrapper or descendant can retain the
+                    // pipe after Claude has finished responding.
+                    if let Some(result) = extract_result_event(&line) {
+                        io.terminal_result = Some(result);
+                        io.streaming = false;
+                        drop(io);
+                        // The protocol is complete even if a wrapper or child
+                        // keeps stdout open. Stop the entire process group now,
+                        // before the direct child can be reaped and reused.
+                        self.control.cancel();
+                        return None;
+                    }
                     // Non-text event, read next line
                     continue;
                 }
@@ -231,45 +246,58 @@ impl ClaudeSession {
             .map(|buf| buf.trim_end().to_string())
             .unwrap_or_default();
 
-        let exit_info = match self.io.lock() {
+        let (terminal_result, has_response, exit_info) = match self.io.lock() {
             Ok(mut io) => {
-                // Hold the same lock used by cancel while `try_wait` may reap
-                // the child. This closes the check/reap/signal PID-reuse race
-                // without involving the IO lock in cancellation.
-                let mut reaped = self
-                    .control
-                    .reaped
-                    .lock()
-                    .unwrap_or_else(|error| error.into_inner());
-                let result = match io.child.try_wait() {
-                    Ok(Some(status)) => {
-                        *reaped = true;
-                        if status.success() {
-                            String::new()
-                        } else {
-                            format!("Process exited with {status}")
+                let terminal_result = io.terminal_result.clone();
+                let has_response = !io.response.is_empty();
+                if terminal_result.is_some() {
+                    // The protocol already supplied the terminal status and
+                    // `next_chunk` stopped the process group.
+                    (terminal_result, has_response, String::new())
+                } else {
+                    // Hold the same lock used by cancel while `try_wait` may
+                    // reap the child. This closes the check/reap/signal
+                    // PID-reuse race without involving the IO lock in cancel.
+                    let mut reaped = self
+                        .control
+                        .reaped
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    let result = match io.child.try_wait() {
+                        Ok(Some(status)) => {
+                            *reaped = true;
+                            if status.success() {
+                                String::new()
+                            } else {
+                                format!("Process exited with {status}")
+                            }
                         }
-                    }
-                    Ok(None) => "Process still running".into(),
-                    Err(error) => format!("Could not check process: {error}"),
-                };
-                drop(reaped);
-                result
+                        Ok(None) => "Process still running".into(),
+                        Err(error) => format!("Could not check process: {error}"),
+                    };
+                    drop(reaped);
+                    (None, has_response, result)
+                }
             }
-            Err(_) => String::new(),
+            Err(_) => (None, false, String::new()),
         };
 
         let mut parts = Vec::new();
+        if let Some(ResultEvent::Error(message)) = terminal_result {
+            parts.push(message);
+        }
         if !stderr_text.is_empty() {
             parts.push(stderr_text);
         }
         if !exit_info.is_empty() {
             parts.push(exit_info);
         }
-        if parts.is_empty() {
-            "Claude process ended without output. Possible rate limit or connection issue.".into()
-        } else {
+        if !parts.is_empty() {
             parts.join("\n")
+        } else if has_response {
+            String::new()
+        } else {
+            "Claude process ended without output. Possible rate limit or connection issue.".into()
         }
     }
 
@@ -324,6 +352,35 @@ fn resolve_binary_path(name: &str) -> String {
 /// - `{"type":"assistant","message":{"content":[{"type":"text","text":"..."}],...}}`
 /// - `{"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}`
 /// - `{"type":"result","result":"...","subtype":"success",...}`
+#[derive(Clone)]
+enum ResultEvent {
+    Success,
+    Error(String),
+}
+
+fn extract_result_event(line: &str) -> Option<ResultEvent> {
+    let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if value.get("type")?.as_str()? != "result" {
+        return None;
+    }
+
+    let subtype = value
+        .get("subtype")
+        .and_then(|item| item.as_str())
+        .unwrap_or("unknown result");
+    if subtype == "success" {
+        return Some(ResultEvent::Success);
+    }
+
+    let message = value
+        .get("result")
+        .and_then(|item| item.as_str())
+        .filter(|message| !message.is_empty())
+        .unwrap_or(subtype)
+        .to_string();
+    Some(ResultEvent::Error(message))
+}
+
 fn extract_text_from_stream_json(line: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
 
@@ -352,7 +409,7 @@ fn extract_text_from_stream_json(line: &str) -> Option<String> {
                 .join("");
             if text.is_empty() { None } else { Some(text) }
         }
-        // Final result — skip since "assistant" already has the text
+        // Result completion and errors are handled by `extract_result_event`.
         "result" => None,
         _ => None,
     }
@@ -380,6 +437,74 @@ mod tests {
 
     const CHUNK: &str =
         r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}"#;
+    const SUCCESS_RESULT: &str = r#"{"type":"result","subtype":"success"}"#;
+
+    fn next_chunk_with_timeout(session: &Arc<ClaudeSession>) -> Option<String> {
+        let reader = Arc::clone(session);
+        let (tx, rx) = mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let chunk = reader.next_chunk();
+            let _ = tx.send(chunk);
+        });
+        let chunk = match rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                session.cancel();
+                let _ = handle.join();
+                panic!("Claude stream did not finish after a terminal result: {error}");
+            }
+        };
+        handle.join().unwrap();
+        chunk
+    }
+
+    fn assert_process_group_gone(pgid: i32) {
+        for _ in 0..50 {
+            let result = unsafe { libc::kill(-pgid, 0) };
+            if result == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("Claude process group {pgid} survived terminal-result cleanup");
+    }
+
+    #[test]
+    fn successful_result_finishes_before_stdout_eof() {
+        let script = fake_claude(&format!(
+            "#!/bin/sh\nsleep 60 &\necho '{CHUNK}'\necho '{SUCCESS_RESULT}'\nwait\n"
+        ));
+        let path = script.to_string_lossy().into_owned();
+        let session = Arc::new(ClaudeSession::start("q", &path, None).unwrap());
+        let pgid = session.control.pid;
+        assert_eq!(next_chunk_with_timeout(&session).as_deref(), Some("hi"));
+        assert_eq!(next_chunk_with_timeout(&session), None);
+        assert_eq!(session.get_error(), "");
+
+        drop(session);
+        assert_process_group_gone(pgid);
+        std::fs::remove_dir_all(script.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn error_result_after_text_finishes_and_preserves_its_message() {
+        let script = fake_claude(&format!(
+            "#!/bin/sh\nsleep 60 &\necho '{CHUNK}'\necho '{{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"result\":\"network unavailable\"}}'\nwait\n"
+        ));
+        let path = script.to_string_lossy().into_owned();
+        let session = Arc::new(ClaudeSession::start("q", &path, None).unwrap());
+        let pgid = session.control.pid;
+
+        assert_eq!(next_chunk_with_timeout(&session).as_deref(), Some("hi"));
+        assert_eq!(next_chunk_with_timeout(&session), None);
+        assert_eq!(session.get_error(), "network unavailable");
+
+        drop(session);
+        assert_process_group_gone(pgid);
+        std::fs::remove_dir_all(script.parent().unwrap()).ok();
+    }
 
     /// stderr is a pipe with a finite buffer. While it was only read after the
     /// stream ended, a child that wrote more than the buffer holds blocked
