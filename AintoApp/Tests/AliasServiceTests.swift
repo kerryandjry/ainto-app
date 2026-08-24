@@ -68,6 +68,77 @@ final class AliasServiceTests: XCTestCase {
         XCTAssertNotNil(AliasStore.validate(entries))
     }
 
+    func testAliasDraftCommitsAValidHotkeyImmediately() {
+        let original = LauncherAlias(
+            alias: "clipboard",
+            hotkey: LauncherHotkey(keyCode: 8, modifiers: 2048, display: "⌥ C"),
+            targetType: .launcherCommand,
+            targetID: "clipboard-history"
+        )
+        var changed = original
+        changed.hotkey = LauncherHotkey(keyCode: 9, modifiers: 2048, display: "⌥ V")
+        var saved: [LauncherAlias] = []
+        var draft = AliasSettingsDraft(savedAliases: [original])
+
+        let result = draft.commit([changed]) { candidate in
+            saved = candidate
+            return .success(())
+        }
+
+        if case .failure(let error) = result {
+            XCTFail("Unexpected save failure: \(error.message)")
+        }
+        XCTAssertEqual(saved, [changed])
+        XCTAssertEqual(draft.aliases, [changed])
+    }
+
+    func testAliasDraftRevertsWhenSavingFails() {
+        let original = LauncherAlias(
+            alias: "clipboard",
+            hotkey: LauncherHotkey(keyCode: 8, modifiers: 2048, display: "⌥ C"),
+            targetType: .launcherCommand,
+            targetID: "clipboard-history"
+        )
+        var changed = original
+        changed.hotkey = LauncherHotkey(keyCode: 9, modifiers: 2048, display: "⌥ V")
+        var draft = AliasSettingsDraft(savedAliases: [original])
+
+        let result = draft.commit([changed]) { _ in .failure(.core(-4)) }
+
+        if case .success = result {
+            XCTFail("Expected the failed save to be reported")
+        }
+        XCTAssertEqual(draft.aliases, [original])
+    }
+
+    func testAliasDraftRejectsConflictsWithoutWriting() {
+        let original = LauncherAlias(
+            alias: "clipboard",
+            hotkey: LauncherHotkey(keyCode: 8, modifiers: 2048, display: "⌥ C"),
+            targetType: .launcherCommand,
+            targetID: "clipboard-history"
+        )
+        let duplicate = LauncherAlias(
+            alias: "files",
+            hotkey: original.hotkey,
+            targetType: .launcherCommand,
+            targetID: "file-search"
+        )
+        var attemptedSave = false
+        var draft = AliasSettingsDraft(savedAliases: [original])
+
+        let result = draft.commit([original, duplicate]) { _ in
+            attemptedSave = true
+            return .success(())
+        }
+
+        if case .success = result {
+            XCTFail("Expected duplicate shortcut validation to fail")
+        }
+        XCTAssertFalse(attemptedSave)
+        XCTAssertEqual(draft.aliases, [original])
+    }
+
     func testAppTargetsDistinguishDuplicateBundleIDs() {
         let first = SearchViewModel.appTargetRef(
             bundleID: "com.example.app",

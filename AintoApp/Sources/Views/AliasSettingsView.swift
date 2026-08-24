@@ -4,7 +4,7 @@ import SwiftUI
 import AintoCore
 
 struct AliasSettingsView: View {
-    @State private var aliases: [LauncherAlias] = []
+    @State private var draft = AliasSettingsDraft()
     @State private var targets: [AliasTargetOption] = []
     @State private var newAlias = ""
     @State private var newHotkey: LauncherHotkey?
@@ -44,7 +44,7 @@ struct AliasSettingsView: View {
                 }
             }
 
-            if aliases.isEmpty {
+            if draft.aliases.isEmpty {
                 Text("No aliases or shortcuts configured.")
                     .font(.system(size: 13))
                     .foregroundStyle(.tertiary)
@@ -52,21 +52,22 @@ struct AliasSettingsView: View {
                 SettingsCard {
                     VStack(spacing: 10) {
                         gridHeader
-                        ForEach(Array(aliases.indices), id: \.self) { index in
+                        ForEach(Array(draft.aliases.indices), id: \.self) { index in
                             HStack(spacing: 10) {
-                                TextField("Optional", text: $aliases[index].alias)
+                                TextField("Optional", text: aliasBinding(index))
                                     .textFieldStyle(.roundedBorder)
                                     .frame(width: 90)
                                 HotkeyRecorderField(hotkey: hotkeyBinding(index))
                                     .frame(width: 100, height: 24)
                                 SearchableTargetPicker(
                                     selection: targetBinding(index),
-                                    targets: targetsIncludingUnavailable(for: aliases[index])
+                                    targets: targetsIncludingUnavailable(for: draft.aliases[index])
                                 )
                                 .frame(minWidth: 130)
                                 Button {
-                                    aliases.remove(at: index)
-                                    persist()
+                                    var candidate = draft.aliases
+                                    candidate.remove(at: index)
+                                    persist(candidate)
                                 } label: {
                                     Image(systemName: "trash")
                                 }
@@ -74,13 +75,15 @@ struct AliasSettingsView: View {
                                 .foregroundStyle(.red)
                                 .help("Delete")
                             }
-                            if index < aliases.count - 1 {
+                            if index < draft.aliases.count - 1 {
                                 Divider().opacity(0.25)
                             }
                         }
                         HStack {
                             Spacer()
-                            Button("Save Changes") { persist() }
+                            Label("Changes save automatically", systemImage: "checkmark.circle")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -97,9 +100,12 @@ struct AliasSettingsView: View {
             }
         }
         .onAppear {
-            aliases = AliasStore.load()
+            reloadSavedAliases()
             targets = Self.loadTargets()
             selectedTarget = targets.first?.ref
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .settingsWindowDidOpen)) { _ in
+            reloadSavedAliases()
         }
     }
 
@@ -114,20 +120,48 @@ struct AliasSettingsView: View {
         .foregroundStyle(.secondary)
     }
 
+    private func aliasBinding(_ index: Int) -> Binding<String> {
+        Binding(
+            get: {
+                guard draft.aliases.indices.contains(index) else { return "" }
+                return draft.aliases[index].alias
+            },
+            set: { alias in
+                guard draft.aliases.indices.contains(index) else { return }
+                var candidate = draft.aliases
+                candidate[index].alias = alias
+                persist(candidate)
+            }
+        )
+    }
+
     private func hotkeyBinding(_ index: Int) -> Binding<LauncherHotkey?> {
         Binding(
-            get: { aliases[index].hotkey },
-            set: { aliases[index].hotkey = $0 }
+            get: {
+                guard draft.aliases.indices.contains(index) else { return nil }
+                return draft.aliases[index].hotkey
+            },
+            set: { hotkey in
+                guard draft.aliases.indices.contains(index) else { return }
+                var candidate = draft.aliases
+                candidate[index].hotkey = hotkey
+                persist(candidate)
+            }
         )
     }
 
     private func targetBinding(_ index: Int) -> Binding<LauncherTargetRef?> {
         Binding(
-            get: { aliases[index].target },
+            get: {
+                guard draft.aliases.indices.contains(index) else { return nil }
+                return draft.aliases[index].target
+            },
             set: { target in
-                guard let target else { return }
-                aliases[index].targetType = target.kind
-                aliases[index].targetID = target.id
+                guard let target, draft.aliases.indices.contains(index) else { return }
+                var candidate = draft.aliases
+                candidate[index].targetType = target.kind
+                candidate[index].targetID = target.id
+                persist(candidate)
             }
         )
     }
@@ -151,37 +185,32 @@ struct AliasSettingsView: View {
             targetType: selectedTarget.kind,
             targetID: selectedTarget.id
         )
-        let candidate = aliases + [entry]
-        if let error = AliasStore.validate(candidate) {
-            validationError = error
-            savedMessage = nil
-            return
+        let candidate = draft.aliases + [entry]
+        if persist(candidate) {
+            newAlias = ""
+            newHotkey = nil
         }
-        aliases = candidate
-        newAlias = ""
-        newHotkey = nil
-        persist()
     }
 
-    private func persist() {
-        aliases = aliases.map { entry in
-            var entry = entry
-            entry.alias = entry.alias.trimmingCharacters(in: .whitespacesAndNewlines)
-            return entry
-        }
-        if let error = AliasStore.validate(aliases) {
-            validationError = error
-            savedMessage = nil
-            return
-        }
-        switch AliasStore.save(aliases) {
+    @discardableResult
+    private func persist(_ candidate: [LauncherAlias]) -> Bool {
+        switch draft.commit(candidate) {
         case .success:
             validationError = nil
-            savedMessage = "Aliases and shortcuts saved."
+            savedMessage = "Saved automatically."
+            return true
         case .failure(let error):
             validationError = error.message
             savedMessage = nil
+            NSSound.beep()
+            return false
         }
+    }
+
+    private func reloadSavedAliases() {
+        draft.reload(AliasStore.load())
+        validationError = nil
+        savedMessage = nil
     }
 
     private static func loadTargets() -> [AliasTargetOption] {
@@ -449,15 +478,29 @@ private final class HotkeyRecorderTextField: NSTextField {
         )
         hotkey = value
         onChange?(value)
-        finishRecording()
+        finishRecording(recordedKeyCode: value.keyCode, modifierFlags: modifiers)
         window?.makeFirstResponder(nil)
     }
 
-    private func finishRecording() {
+    private func finishRecording(
+        recordedKeyCode: UInt32? = nil,
+        modifierFlags: NSEvent.ModifierFlags = []
+    ) {
         guard isRecording else { return }
         isRecording = false
         updateDisplay()
-        NotificationCenter.default.post(name: .shortcutRecordingDidEnd, object: self)
+        var userInfo: [String: NSNumber]?
+        if let recordedKeyCode {
+            userInfo = [
+                ShortcutRecordingInfo.keyCode: NSNumber(value: recordedKeyCode),
+                ShortcutRecordingInfo.modifierFlags: NSNumber(value: modifierFlags.rawValue),
+            ]
+        }
+        NotificationCenter.default.post(
+            name: .shortcutRecordingDidEnd,
+            object: self,
+            userInfo: userInfo
+        )
     }
 
     private func updateDisplay() {
