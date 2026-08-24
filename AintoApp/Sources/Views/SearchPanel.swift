@@ -98,6 +98,9 @@ final class SearchPanel: NSPanel {
         viewModel.onSystemActionCompleted = { [weak self] in self?.hidePanel() }
         viewModel.onProcessKillCompleted = { [weak self] in self?.hidePanel() }
         viewModel.onSearchResultsWillChange = { [weak self] in self?.hideActionPanel() }
+        viewModel.onFocusRequest = { [weak self] selectAll, completion in
+            self?.requestFocus(selectAll: selectAll, completion: completion)
+        }
 
         viewModel.loadAISettings()
     }
@@ -107,6 +110,8 @@ final class SearchPanel: NSPanel {
     private var lastPresentedScreenFrame: NSRect?
     /// Invalidates delayed sizing passes from an older presentation.
     private var presentationGeneration: UInt = 0
+    /// Invalidates responder retries from an older presentation or page.
+    private var focusGeneration: UInt = 0
 
     func showPanel() {
         // Alias editing activates Ainto. Preserve the last external app so
@@ -141,6 +146,7 @@ final class SearchPanel: NSPanel {
 
     func hidePanel() {
         hideActionPanel()
+        focusGeneration &+= 1
         viewModel.prepareForPanelHide()
         hiddenAt = Date()
         // If the user dragged the panel, remember the display it actually
@@ -218,6 +224,101 @@ final class SearchPanel: NSPanel {
                 self.sizeToFitContent()
             }
         }
+    }
+
+    func requestFocus(selectAll: Bool, completion: (() -> Void)? = nil) {
+        focusGeneration &+= 1
+        let generation = focusGeneration
+        let page = viewModel.page
+        DispatchQueue.main.async { [weak self] in
+            self?.attemptFocus(
+                generation: generation,
+                page: page,
+                selectAll: selectAll,
+                completion: completion,
+                attemptsRemaining: 8
+            )
+        }
+    }
+
+    private func attemptFocus(
+        generation: UInt,
+        page: LauncherPage,
+        selectAll: Bool,
+        completion: (() -> Void)?,
+        attemptsRemaining: Int
+    ) {
+        guard generation == focusGeneration,
+              viewModel.page == page,
+              isVisible else { return }
+
+        hostingView.layoutSubtreeIfNeeded()
+        if isKeyWindow,
+           let textField = primaryTextField(for: page),
+           makeFirstResponder(textField),
+           let editor = textField.currentEditor(),
+           firstResponder === editor {
+            if selectAll {
+                editor.selectAll(nil)
+            }
+            completion?()
+            return
+        }
+
+        guard attemptsRemaining > 1 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.attemptFocus(
+                generation: generation,
+                page: page,
+                selectAll: selectAll,
+                completion: completion,
+                attemptsRemaining: attemptsRemaining - 1
+            )
+        }
+    }
+
+    private func primaryTextField(for page: LauncherPage) -> NSTextField? {
+        let fields = visibleEditableTextFields(in: contentView)
+        let placeholder: String? = switch page {
+        case .main:
+            viewModel.searchMode == .claude ? "Ask Claude anything..." : "Search..."
+        case .clipboard:
+            "Type to filter entries..."
+        case .snippets:
+            viewModel.isEditingSnippet ? "Snippet name" : "Filter snippets..."
+        case .aiCommands:
+            viewModel.isEditingAICommand ? "Command name" : "Filter commands..."
+        case .fileSearch:
+            "Search files and folders…"
+        case .systemConfirmation:
+            nil
+        case .claude:
+            "Follow up..."
+        }
+        guard let placeholder else { return nil }
+        return fields.first(where: { $0.placeholderString == placeholder })
+    }
+
+    private func visibleEditableTextFields(in view: NSView?) -> [NSTextField] {
+        guard let view, !view.isHidden, view.alphaValue > 0 else { return [] }
+        var fields: [NSTextField] = []
+        if let textField = view as? NSTextField,
+           textField.isEditable,
+           textField.isEnabled,
+           textField.window === self {
+            fields.append(textField)
+        }
+        for subview in view.subviews {
+            fields.append(contentsOf: visibleEditableTextFields(in: subview))
+        }
+        return fields
+    }
+
+    var focusedTextFieldPlaceholderForTesting: String? {
+        visibleEditableTextFields(in: contentView).first(where: { textField in
+            guard let editor = textField.currentEditor() else { return false }
+            return firstResponder === editor
+        })?.placeholderString
     }
 
     private func sizeToFitContent() {
@@ -299,10 +400,12 @@ final class SearchPanel: NSPanel {
             let message = "Ainto needs Accessibility permission to read selected text. "
                 + "Enable Ainto in System Settings → Privacy & Security → Accessibility, then try again."
             completion(.failure(message))
+            viewModel.focusFilterField()
             return
         }
         guard let previousApp else {
             completion(.failure("Ainto could not identify the app containing the selected text."))
+            viewModel.focusFilterField()
             return
         }
 
@@ -319,6 +422,7 @@ final class SearchPanel: NSPanel {
             guard let previousItems = PasteboardAccess.snapshotItems(from: pasteboard) else {
                 PasteboardAccess.endExclusiveAccess()
                 completion(.failure("Ainto could not safely preserve the current clipboard."))
+                viewModel.focusFilterField()
                 return
             }
 
@@ -353,10 +457,11 @@ final class SearchPanel: NSPanel {
 
             // Present UI and invoke callbacks only after releasing the
             // non-reentrant gate; either path can synchronously read clipboard.
-            // The completion immediately switches to Claude, so use the same
-            // bounded sizing passes as a normal launcher presentation.
-            presentPanel()
+            // Apply the page transition while hidden, then present and focus
+            // the resulting page rather than the outgoing AI-command page.
             completion(.success(selection))
+            presentPanel()
+            viewModel.focusFilterField()
         }
     }
 

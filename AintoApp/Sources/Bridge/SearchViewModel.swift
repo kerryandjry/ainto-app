@@ -341,7 +341,6 @@ final class SearchViewModel: ObservableObject {
     @Published var query: String = ""
     @Published var results: [SearchResult] = []
     @Published var selectedIndex: Int = 0
-    @Published var shouldSelectAll = false
     @Published var page: LauncherPage = .main
     @Published var searchMode: SearchMode = .apps
 
@@ -455,6 +454,10 @@ final class SearchViewModel: ObservableObject {
     /// Dismisses an action panel whose closures belong to old search results.
     var onSearchResultsWillChange: (() -> Void)?
 
+    /// SearchPanel owns focus because SwiftUI focus requests can race a hidden
+    /// non-activating panel being presented or changing pages.
+    var onFocusRequest: ((_ selectAll: Bool, _ completion: (() -> Void)?) -> Void)?
+
     /// Callback to move clipboard table selection (set by ClipboardTableView).
     /// Bypasses @Published to avoid SwiftUI re-render on every arrow key.
     var onClipboardSelectionMove: ((_ newIndex: Int) -> Void)?
@@ -483,7 +486,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     func selectAll() {
-        shouldSelectAll = true
+        onFocusRequest?(true, nil)
         // Refresh default results if query is empty
         if query.isEmpty {
             results = buildDefaultResults()
@@ -1828,41 +1831,11 @@ final class SearchViewModel: ObservableObject {
 
     // MARK: - Focus
 
-    /// Force focus on the first visible, editable text field.
-    /// SwiftUI @FocusState doesn't work reliably with NSPanel + nonActivatingPanel,
-    /// so we use AppKit directly. Retries up to 3 times with short delays to handle
-    /// SwiftUI render lag (e.g. conditional view mounting or .disabled toggling).
+    /// Ask the visible SearchPanel to focus its current page's primary field.
+    /// The panel verifies responder acquisition and retries against its own
+    /// focus generation before running the completion.
     func focusFilterField(then completion: (() -> Void)? = nil) {
-        func tryFocus(attempts: Int) {
-            guard attempts > 0 else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                // Alias fields in Settings can remain the key window. Always
-                // focus the visible launcher panel instead of NSApp.keyWindow.
-                if let window = NSApp.windows
-                    .compactMap({ $0 as? SearchPanel })
-                    .first(where: { $0.isVisible }),
-                   let textField = Self.findTextField(in: window.contentView) {
-                    window.makeFirstResponder(textField)
-                    completion?()
-                } else {
-                    tryFocus(attempts: attempts - 1)
-                }
-            }
-        }
-        tryFocus(attempts: 3)
-    }
-
-    private static func findTextField(in view: NSView?) -> NSTextField? {
-        guard let view else { return nil }
-        if let tf = view as? NSTextField, tf.isEditable, tf.isEnabled {
-            return tf
-        }
-        for subview in view.subviews {
-            if let found = findTextField(in: subview) {
-                return found
-            }
-        }
-        return nil
+        onFocusRequest?(false, completion)
     }
 
     // MARK: - Private
