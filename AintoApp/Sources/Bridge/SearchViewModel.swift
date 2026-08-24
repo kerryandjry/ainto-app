@@ -1668,6 +1668,7 @@ final class SearchViewModel: ObservableObject {
                 claudeMessages[lastIdx].text = "Error: Could not start AI session. Is `\(claudeBinary)` installed?"
             }
             claudeIsStreaming = false
+            focusFilterField()
             return
         }
         claudeSession = session
@@ -1687,15 +1688,15 @@ final class SearchViewModel: ObservableObject {
                     }
 
                     var errorMessage: String?
-                    if !gotAnyText {
-                        errorMessage = "Claude process ended without output."
-                        if let errStr = rc_claude_get_stderr(ptr) {
-                            let stderr = String(cString: errStr)
-                            rc_free_string(errStr)
-                            if !stderr.isEmpty {
-                                errorMessage = stderr
-                            }
+                    if let errStr = rc_claude_get_stderr(ptr) {
+                        let stderr = String(cString: errStr)
+                        rc_free_string(errStr)
+                        if !stderr.isEmpty {
+                            errorMessage = stderr
                         }
+                    }
+                    if !gotAnyText && errorMessage == nil {
+                        errorMessage = "Claude process ended without output."
                     }
 
                     await MainActor.run { [weak self] in
@@ -1714,6 +1715,7 @@ final class SearchViewModel: ObservableObject {
                         }
                         self.claudeIsStreaming = false
                         self.claudeSession = nil
+                        self.focusFilterField()
                     }
                     rc_claude_free(ptr)
                     break
@@ -1852,7 +1854,7 @@ final class SearchViewModel: ObservableObject {
 
     private static func findTextField(in view: NSView?) -> NSTextField? {
         guard let view else { return nil }
-        if let tf = view as? NSTextField, tf.isEditable {
+        if let tf = view as? NSTextField, tf.isEditable, tf.isEnabled {
             return tf
         }
         for subview in view.subviews {
