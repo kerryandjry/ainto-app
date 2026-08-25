@@ -8,6 +8,8 @@ import Sparkle
 // pi-lens-ignore: type_body_length
 /// Settings — clean sidebar + card-based content.
 struct SettingsView: View {
+    static let contentSize = NSSize(width: 720, height: 500)
+
     var hotkeyManager: HotkeyManager?
 
     @State private var clipboardMaxItems: Int = 200
@@ -72,9 +74,9 @@ struct SettingsView: View {
                 }
                 Spacer()
             }
-            .frame(width: 160)
             .padding(.vertical, 16)
             .padding(.horizontal, 8)
+            .frame(width: 160)
             .background(Color.primary.opacity(0.04))
 
             // Content
@@ -104,7 +106,7 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: 640, height: 480)
+        .frame(width: Self.contentSize.width, height: Self.contentSize.height)
         .onAppear {
             loadConfig()
             if let hk = hotkeyManager?.currentHotkey { selectedHotkey = hk }
@@ -289,12 +291,17 @@ struct SettingsView: View {
             SectionHeader(title: "AI", icon: "sparkle")
 
             SettingsCard {
-                SettingsRow(label: "Enabled") {
-                    Toggle("", isOn: $aiEnabled).labelsHidden().toggleStyle(.switch)
+                SettingsRow(label: "Enable AI features") {
+                    Toggle("", isOn: $aiEnabled)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
                 }
             }
 
-            Text("Hides every AI feature in the launcher when off, including AI Commands and Claude mode.")
+            Text(
+                "Turn this off to disable Claude mode, AI Commands, and related aliases and shortcuts. "
+                    + "Your saved commands and settings are preserved."
+            )
                 .font(.system(size: 12))
                 .foregroundStyle(.tertiary)
                 .padding(.leading, 4)
