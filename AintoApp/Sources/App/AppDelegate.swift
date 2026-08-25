@@ -182,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configWatchers.removeAll()
         configDirectoryWatcher?.cancel()
         configDirectoryWatcher = nil
+        ClaudeImageAttachmentStore.beginTerminationCleanup()
     }
 
     private func toggleSearchPanel() {
