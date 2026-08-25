@@ -4,6 +4,14 @@ import SwiftUI
 import AintoCore
 
 struct AliasSettingsView: View {
+    private enum Layout {
+        static let spacing: CGFloat = 10
+        static let aliasWidth: CGFloat = 96
+        static let shortcutWidth: CGFloat = 110
+        static let actionWidth: CGFloat = 42
+        static let minimumTargetWidth: CGFloat = 160
+    }
+
     @State private var draft = AliasSettingsDraft()
     @State private var targets: [AliasTargetOption] = []
     @State private var newAlias = ""
@@ -16,26 +24,23 @@ struct AliasSettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             SectionHeader(title: "Aliases & Shortcuts", icon: "command")
 
-            Text(
-                "Map an optional typed alias, a global keyboard shortcut, or both to one target. "
-                    + "Aliases are exact and case-insensitive."
-            )
+            Text("Assign a typed alias, global shortcut, or both to any launcher target.")
             .font(.system(size: 12))
             .foregroundStyle(.secondary)
 
             SettingsCard {
                 VStack(spacing: 10) {
                     gridHeader
-                    HStack(spacing: 10) {
+                    HStack(spacing: Layout.spacing) {
                         TextField("Optional alias", text: $newAlias)
                             .textFieldStyle(.roundedBorder)
-                            .frame(width: 90)
+                            .frame(width: Layout.aliasWidth)
                         HotkeyRecorderField(hotkey: $newHotkey)
-                            .frame(width: 100, height: 24)
+                            .frame(width: Layout.shortcutWidth, height: 24)
                         SearchableTargetPicker(selection: $selectedTarget, targets: targets)
-                            .frame(minWidth: 130)
+                            .frame(minWidth: Layout.minimumTargetWidth)
                         Button("Add") { addEntry() }
-                            .frame(width: 42)
+                            .frame(width: Layout.actionWidth)
                             .disabled(
                                 (AliasStore.normalize(newAlias).isEmpty && newHotkey == nil)
                                     || selectedTarget == nil
@@ -53,17 +58,17 @@ struct AliasSettingsView: View {
                     VStack(spacing: 10) {
                         gridHeader
                         ForEach(Array(draft.aliases.indices), id: \.self) { index in
-                            HStack(spacing: 10) {
+                            HStack(spacing: Layout.spacing) {
                                 TextField("Optional", text: aliasBinding(index))
                                     .textFieldStyle(.roundedBorder)
-                                    .frame(width: 90)
+                                    .frame(width: Layout.aliasWidth)
                                 HotkeyRecorderField(hotkey: hotkeyBinding(index))
-                                    .frame(width: 100, height: 24)
+                                    .frame(width: Layout.shortcutWidth, height: 24)
                                 SearchableTargetPicker(
                                     selection: targetBinding(index),
                                     targets: targetsIncludingUnavailable(for: draft.aliases[index])
                                 )
-                                .frame(minWidth: 130)
+                                .frame(minWidth: Layout.minimumTargetWidth)
                                 Button {
                                     var candidate = draft.aliases
                                     candidate.remove(at: index)
@@ -71,6 +76,7 @@ struct AliasSettingsView: View {
                                 } label: {
                                     Image(systemName: "trash")
                                 }
+                                .frame(width: Layout.actionWidth)
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.red)
                                 .help("Delete")
@@ -99,6 +105,7 @@ struct AliasSettingsView: View {
                     .foregroundStyle(.green)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             reloadSavedAliases()
             targets = Self.loadTargets()
@@ -110,11 +117,11 @@ struct AliasSettingsView: View {
     }
 
     private var gridHeader: some View {
-        HStack(spacing: 10) {
-            Text("Alias").frame(width: 90, alignment: .leading)
-            Text("Shortcut").frame(width: 100, alignment: .leading)
+        HStack(spacing: Layout.spacing) {
+            Text("Alias").frame(width: Layout.aliasWidth, alignment: .leading)
+            Text("Shortcut").frame(width: Layout.shortcutWidth, alignment: .leading)
             Text("Target").frame(maxWidth: .infinity, alignment: .leading)
-            Color.clear.frame(width: 28, height: 1)
+            Color.clear.frame(width: Layout.actionWidth, height: 1)
         }
         .font(.system(size: 11, weight: .semibold))
         .foregroundStyle(.secondary)
