@@ -43,8 +43,7 @@ impl AppIndex {
             .filter_map(|app| {
                 let score = fuzzy_score(&query_lc, &app.search_name, &app.display_name);
                 if score > 0 {
-                    // Combine match score with ranking (ranking adds a small boost)
-                    Some((app, score + app.ranking.min(50)))
+                    Some((app, ranked_fuzzy_score(score, app.ranking)))
                 } else {
                     None
                 }
@@ -150,6 +149,23 @@ fn fuzzy_score(query: &str, search_name: &str, display_name: &str) -> i32 {
     }
 
     0
+}
+
+/// Add frecency without crossing textual match tiers. A frequently used weak
+/// subsequence remains below an unused contiguous or prefix match.
+fn ranked_fuzzy_score(match_score: i32, ranking: i32) -> i32 {
+    if match_score <= 0 {
+        return 0;
+    }
+    let tier_ceiling = match match_score {
+        200.. => 300,
+        150..=199 => 199,
+        120..=149 => 149,
+        100..=119 => 119,
+        _ => 99,
+    };
+    let headroom = (tier_ceiling - match_score).max(0);
+    match_score + ranking.clamp(0, headroom)
 }
 
 /// Check if `query` chars appear in order in `target`.
@@ -285,5 +301,23 @@ mod tests {
     fn test_ij_intellij() {
         // "ij" → IntelliJ IDEA
         assert!(fuzzy_score("ij", "intellij idea", "IntelliJ IDEA") > 0);
+    }
+
+    #[test]
+    fn strong_text_match_beats_frequent_weak_subsequence() {
+        let weak = fuzzy_score("set", "translate to english", "Translate to English");
+        let strong = fuzzy_score("set", "system settings", "System Settings");
+        assert!(weak < strong);
+        assert!(ranked_fuzzy_score(weak, 100) < ranked_fuzzy_score(strong, 0));
+    }
+
+    #[test]
+    fn frecency_reorders_only_within_match_tier() {
+        let lower = fuzzy_score("set", "translate to english", "Translate to English");
+        let higher = fuzzy_score("set", "snippets", "Snippets");
+        assert!(lower < 100);
+        assert!(higher < 100);
+        assert!(ranked_fuzzy_score(lower, 100) >= ranked_fuzzy_score(higher, 0));
+        assert!(ranked_fuzzy_score(lower, 100) < 100);
     }
 }
