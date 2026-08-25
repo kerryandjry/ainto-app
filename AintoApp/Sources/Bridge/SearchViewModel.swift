@@ -110,6 +110,7 @@ struct ClaudeMessage: Identifiable {
     let id = UUID()
     let role: ClaudeRole
     var text: String
+    var attachments: [ClaudeImageAttachment] = []
 }
 
 enum ClaudeRole {
@@ -354,6 +355,9 @@ final class SearchViewModel: ObservableObject {
     // Claude state
     @Published var claudeMessages: [ClaudeMessage] = []
     @Published var claudeIsStreaming = false
+    @Published var claudePendingAttachments: [ClaudeImageAttachment] = []
+    @Published var claudeAttachmentError: String?
+    @Published var claudeAttachmentIsImporting = false
     private var claudeSession: UnsafeMutableRawPointer?
     private var claudeSessionId: String?
 
@@ -464,6 +468,10 @@ final class SearchViewModel: ObservableObject {
 
     /// Callback to reload text expander snippets (set by AppDelegate)
     var onSnippetsChanged: (() -> Void)?
+
+    init() {
+        ClaudeImageAttachmentStore.removeStaleAttachments()
+    }
 
     var statusText: String {
         switch results.count {
@@ -577,7 +585,7 @@ final class SearchViewModel: ObservableObject {
         if page == .systemConfirmation && isExecutingSystemAction { return }
         if page == .claude {
             claudeCancel()
-            claudeMessages.removeAll()
+            clearClaudeConversation()
             claudeSessionId = nil // start fresh next time
         }
         if page == .aiCommands && isEditingAICommand {
@@ -1301,9 +1309,9 @@ final class SearchViewModel: ObservableObject {
         guard !aiEnabled else { return }
         if page == .claude {
             claudeCancel()
-            claudeMessages.removeAll()
             claudeSessionId = nil
         }
+        clearClaudeConversation()
         if page == .claude || page == .aiCommands {
             page = .main
         }
@@ -1637,18 +1645,117 @@ final class SearchViewModel: ObservableObject {
         } else {
             searchMode = .apps
             claudeCancel()
+            clearPendingClaudeAttachments()
             performSearch(query: query)
         }
     }
 
+    var acceptsClaudeImagePaste: Bool {
+        aiEnabled
+            && !claudeIsStreaming
+            && ((page == .main && searchMode == .claude) || page == .claude)
+    }
+
+    func clearPendingClaudeAttachments() {
+        ClaudeImageAttachmentStore.remove(claudePendingAttachments)
+        claudePendingAttachments = []
+        claudeAttachmentError = nil
+    }
+
+    private func clearClaudeConversation() {
+        let messageAttachments = claudeMessages.flatMap(\.attachments)
+        ClaudeImageAttachmentStore.remove(messageAttachments + claudePendingAttachments)
+        claudeMessages = []
+        claudePendingAttachments = []
+        claudeAttachmentError = nil
+    }
+
+    func beginClaudeImageImport() -> Bool {
+        guard acceptsClaudeImagePaste else { return false }
+        guard !claudeAttachmentIsImporting else {
+            claudeAttachmentError = "Wait for the current image attachment to finish preparing."
+            NSSound.beep()
+            return false
+        }
+        claudeAttachmentIsImporting = true
+        claudeAttachmentError = nil
+        return true
+    }
+
+    func cancelClaudeImageImport() {
+        claudeAttachmentIsImporting = false
+    }
+
+    func finishClaudeImageImport(
+        _ images: [ClaudeImageAttachmentStore.PasteboardImage]
+    ) async {
+        defer { claudeAttachmentIsImporting = false }
+        guard !images.isEmpty else { return }
+        let availableSlots = ClaudeImageAttachmentStore.maximumAttachments
+            - claudePendingAttachments.count
+        guard images.count <= availableSlots else {
+            claudeAttachmentError = ClaudeImageAttachmentError.tooManyImages.localizedDescription
+            NSSound.beep()
+            return
+        }
+
+        let result = await Task.detached(priority: .userInitiated) {
+            var created: [ClaudeImageAttachment] = []
+            do {
+                for image in images {
+                    created.append(try ClaudeImageAttachmentStore.createAttachment(from: image))
+                }
+                return Result<[ClaudeImageAttachment], ClaudeImageAttachmentError>.success(created)
+            } catch {
+                ClaudeImageAttachmentStore.remove(created)
+                let attachmentError = error as? ClaudeImageAttachmentError ?? .writeFailed
+                return Result<[ClaudeImageAttachment], ClaudeImageAttachmentError>.failure(attachmentError)
+            }
+        }.value
+
+        guard acceptsClaudeImagePaste else {
+            if case .success(let attachments) = result {
+                ClaudeImageAttachmentStore.remove(attachments)
+            }
+            return
+        }
+        switch result {
+        case .success(let attachments):
+            let currentSlots = ClaudeImageAttachmentStore.maximumAttachments
+                - claudePendingAttachments.count
+            guard attachments.count <= currentSlots else {
+                ClaudeImageAttachmentStore.remove(attachments)
+                claudeAttachmentError = ClaudeImageAttachmentError.tooManyImages.localizedDescription
+                NSSound.beep()
+                return
+            }
+            claudePendingAttachments.append(contentsOf: attachments)
+            claudeAttachmentError = nil
+        case .failure(let error):
+            claudeAttachmentError = error.localizedDescription
+            NSSound.beep()
+        }
+    }
+
+    func removePendingClaudeAttachment(id: UUID) {
+        guard let index = claudePendingAttachments.firstIndex(where: { $0.id == id }) else { return }
+        let attachment = claudePendingAttachments.remove(at: index)
+        ClaudeImageAttachmentStore.remove([attachment])
+        claudeAttachmentError = nil
+    }
+
     func claudeAsk() {
-        guard aiEnabled else { return }
-        guard !query.isEmpty else { return }
+        guard aiEnabled, !claudeAttachmentIsImporting else { return }
+        guard !query.isEmpty || !claudePendingAttachments.isEmpty else { return }
         let prompt = query
+        let attachments = claudePendingAttachments
+        let claudePrompt = ClaudeImageAttachmentStore.prompt(text: prompt, attachments: attachments)
         let wasOnClaudePage = page == .claude
 
         // Add user message
-        claudeMessages.append(ClaudeMessage(role: .user, text: prompt))
+        claudeMessages.append(ClaudeMessage(role: .user, text: prompt, attachments: attachments))
+        claudePendingAttachments = []
+        claudeAttachmentError = nil
 
         // Add empty assistant message (will be filled by streaming)
         claudeMessages.append(ClaudeMessage(role: .assistant, text: ""))
@@ -1665,7 +1772,7 @@ final class SearchViewModel: ObservableObject {
         if !wasOnClaudePage {
             claudeSessionId = nil
         }
-        guard let session = rc_claude_start(prompt, claudeBinary, resumeId) else {
+        guard let session = rc_claude_start(claudePrompt, claudeBinary, resumeId) else {
             // Update last message with error
             if let lastIdx = claudeMessages.indices.last {
                 claudeMessages[lastIdx].text = "Error: Could not start AI session. Is `\(claudeBinary)` installed?"
@@ -1762,9 +1869,10 @@ final class SearchViewModel: ObservableObject {
         guard claudeCanRetryLastRequest,
               let userIndex = claudeMessages.lastIndex(where: { $0.role == .user })
         else { return }
-        let prompt = claudeMessages[userIndex].text
+        let userMessage = claudeMessages[userIndex]
         claudeMessages.removeSubrange(userIndex...)
-        query = prompt
+        query = userMessage.text
+        claudePendingAttachments = userMessage.attachments
         claudeAsk()
     }
 

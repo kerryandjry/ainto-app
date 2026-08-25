@@ -96,6 +96,20 @@ struct MainView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
 
+            if viewModel.searchMode == .claude
+                && (!viewModel.claudePendingAttachments.isEmpty
+                    || viewModel.claudeAttachmentError != nil
+                    || viewModel.claudeAttachmentIsImporting) {
+                ClaudeAttachmentComposer(
+                    attachments: viewModel.claudePendingAttachments,
+                    error: viewModel.claudeAttachmentError,
+                    isImporting: viewModel.claudeAttachmentIsImporting,
+                    onRemove: viewModel.removePendingClaudeAttachment
+                )
+                .padding(.horizontal, 20)
+                .padding(.bottom, 10)
+            }
+
             // Results list (hidden in Claude mode)
             if !viewModel.results.isEmpty && viewModel.searchMode == .apps {
                 Divider()
@@ -177,8 +191,15 @@ struct MainView: View {
                             && viewModel.results[viewModel.selectedIndex].isProcessKillConfirmation) {
                         KeyHint(keys: ["esc"], label: "clear")
                     }
+                    if viewModel.searchMode == .claude {
+                        KeyHint(keys: ["⌘", "V"], label: "attach image")
+                        KeyHint(keys: ["↵"], label: "send")
+                    }
                     if viewModel.aiEnabled {
-                        KeyHint(keys: ["Tab"], label: "AI mode")
+                        KeyHint(
+                            keys: ["Tab"],
+                            label: viewModel.searchMode == .claude ? "Search" : "AI mode"
+                        )
                     }
                 }
             }

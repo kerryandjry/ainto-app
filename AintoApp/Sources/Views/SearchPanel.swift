@@ -563,6 +563,14 @@ final class SearchPanel: NSPanel {
             let keyCode = Int(event.keyCode)
             let hasCmd = flags.contains(.command)
 
+            // Serialize pasteboard reads with ClipboardMonitor. In Claude mode,
+            // an image becomes an attachment; otherwise this performs an
+            // ordinary text paste while the shared pasteboard gate is held.
+            if hasCmd, keyCode == 9, let textView = self.firstResponder as? NSTextView { // V
+                self.handlePaste(for: textView)
+                return nil
+            }
+
             // Forward standard text editing shortcuts to first responder.
             // NonActivatingPanel doesn't receive Edit menu actions automatically.
             if hasCmd, self.firstResponder is NSTextView {
@@ -571,7 +579,6 @@ final class SearchPanel: NSPanel {
                 case 0: #selector(NSText.selectAll(_:))  // A
                 case 7: #selector(NSText.cut(_:))        // X
                 case 8: #selector(NSText.copy(_:))       // C
-                case 9: #selector(NSText.paste(_:))      // V
                 default: nil
                 }
                 if let action {
@@ -765,6 +772,60 @@ final class SearchPanel: NSPanel {
                 return nil
             default:
                 return event
+            }
+        }
+    }
+
+    private func handlePaste(for textView: NSTextView) {
+        let shouldAcceptImages = viewModel.acceptsClaudeImagePaste
+        if shouldAcceptImages, !viewModel.beginClaudeImageImport() {
+            return
+        }
+
+        Task { @MainActor [weak self, weak textView] in
+            guard let self else { return }
+            guard let textView else {
+                if shouldAcceptImages {
+                    self.viewModel.cancelClaudeImageImport()
+                }
+                return
+            }
+            let images: [ClaudeImageAttachmentStore.PasteboardImage] = if shouldAcceptImages {
+                await Task.detached(priority: .userInitiated) {
+                    PasteboardAccess.withPasteboard {
+                        ClaudeImageAttachmentStore.images(from: $0)
+                    }
+                }.value
+            } else {
+                []
+            }
+
+            if !images.isEmpty {
+                guard self.isKeyWindow, self.viewModel.acceptsClaudeImagePaste else {
+                    self.viewModel.cancelClaudeImageImport()
+                    return
+                }
+                await self.viewModel.finishClaudeImageImport(images)
+                return
+            }
+
+            await PasteboardAccess.acquireExclusiveAccess()
+            guard self.isKeyWindow,
+                  textView.window === self,
+                  self.firstResponder === textView
+            else {
+                PasteboardAccess.endExclusiveAccess()
+                if shouldAcceptImages {
+                    self.viewModel.cancelClaudeImageImport()
+                }
+                return
+            }
+            // NSTextView reads NSPasteboard.general internally. It is safe here
+            // because this task owns PasteboardAccess exclusive access.
+            textView.paste(nil)
+            PasteboardAccess.endExclusiveAccess()
+            if shouldAcceptImages {
+                self.viewModel.cancelClaudeImageImport()
             }
         }
     }

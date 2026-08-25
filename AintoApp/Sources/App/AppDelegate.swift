@@ -286,6 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configDirectoryWatcher?.cancel()
         configDirectoryWatcher = nil
         NSWorkspace.shared.notificationCenter.removeObserver(self)
+        ClaudeImageAttachmentStore.beginTerminationCleanup()
     }
 
     private func toggleSearchPanel() {

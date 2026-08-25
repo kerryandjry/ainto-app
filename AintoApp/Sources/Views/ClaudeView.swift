@@ -76,6 +76,19 @@ struct ClaudeView: View {
             Divider().opacity(0.5)
 
             // Input bar
+            if !viewModel.claudePendingAttachments.isEmpty
+                || viewModel.claudeAttachmentError != nil
+                || viewModel.claudeAttachmentIsImporting {
+                ClaudeAttachmentComposer(
+                    attachments: viewModel.claudePendingAttachments,
+                    error: viewModel.claudeAttachmentError,
+                    isImporting: viewModel.claudeAttachmentIsImporting,
+                    onRemove: viewModel.removePendingClaudeAttachment
+                )
+                .padding(.horizontal, 20)
+                .padding(.top, 10)
+            }
+
             HStack(spacing: 12) {
                 TextField("Follow up...", text: $viewModel.query)
                     .textFieldStyle(.plain)
@@ -120,7 +133,10 @@ struct ClaudeView: View {
                         KeyHint(keys: ["⌘", "↵"], label: "replace")
                         KeyHint(keys: ["⌘", "C"], label: "copy")
                     }
-                    KeyHint(keys: ["↵"], label: "send")
+                    if !viewModel.claudeIsStreaming {
+                        KeyHint(keys: ["⌘", "V"], label: "attach image")
+                        KeyHint(keys: ["↵"], label: "send")
+                    }
                     KeyHint(keys: ["esc"], label: "back")
                 }
             }
@@ -142,12 +158,19 @@ struct MessageBubble: View {
             if message.role == .user {
                 Spacer(minLength: 60)
                 // User message — right aligned
-                Text(message.text)
-                    .font(.system(size: 13))
-                    .padding(10)
-                    .background(Color.accentColor.opacity(0.2))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 8) {
+                    if !message.attachments.isEmpty {
+                        ClaudeAttachmentGallery(attachments: message.attachments)
+                    }
+                    if !message.text.isEmpty {
+                        Text(message.text)
+                            .font(.system(size: 13))
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(10)
+                .background(Color.accentColor.opacity(0.2))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             } else {
                 // Assistant message — left aligned with icon
                 VStack(alignment: .leading, spacing: 0) {
@@ -183,6 +206,105 @@ struct MessageBubble: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                 Spacer(minLength: 60)
+            }
+        }
+    }
+}
+
+struct ClaudeAttachmentComposer: View {
+    let attachments: [ClaudeImageAttachment]
+    let error: String?
+    let isImporting: Bool
+    let onRemove: (UUID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if isImporting {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Preparing image attachment…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if !attachments.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(attachments) { attachment in
+                            HStack(spacing: 6) {
+                                ClaudeAttachmentImageView(attachment: attachment)
+                                    .frame(width: 36, height: 30)
+                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                                Text(attachment.displayName)
+                                    .font(.system(size: 11))
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 110)
+                                Button {
+                                    onRemove(attachment.id)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Remove attachment")
+                            }
+                            .padding(5)
+                            .background(Color.primary.opacity(0.06))
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                    }
+                }
+            }
+            if let error {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+}
+
+private struct ClaudeAttachmentImageView: View {
+    let attachment: ClaudeImageAttachment
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    Color.primary.opacity(0.05)
+                    Image(systemName: "photo")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .task(id: attachment.id) {
+            let url = attachment.url
+            let data = await Task.detached(priority: .utility) {
+                ClaudeImageAttachmentStore.thumbnailData(for: url)
+            }.value
+            guard !Task.isCancelled, let data else { return }
+            image = NSImage(data: data)
+        }
+    }
+}
+
+struct ClaudeAttachmentGallery: View {
+    let attachments: [ClaudeImageAttachment]
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(attachments) { attachment in
+                ClaudeAttachmentImageView(attachment: attachment)
+                    .frame(width: 96, height: 72)
+                    .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .help(attachment.displayName)
             }
         }
     }
