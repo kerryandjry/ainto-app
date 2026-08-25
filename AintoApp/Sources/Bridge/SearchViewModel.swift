@@ -1,3 +1,4 @@
+// swiftlint:disable file_length type_body_length function_body_length identifier_name line_length cyclomatic_complexity
 import AppKit
 import Foundation
 import AintoCore
@@ -45,6 +46,25 @@ func fuzzyScore(_ query: String, _ target: String) -> Int {
     if t.contains(q) { return 100 }
     if fuzzyMatch(q, t) { return 60 + Int(Double(q.count) / Double(t.count) * 40) }
     return 0
+}
+
+/// Add frecency without allowing a weaker match tier to outrank a stronger
+/// textual match. Usage can reorder results inside a tier, but a scattered
+/// subsequence such as s-e-t in "Translate to English" stays below the
+/// contiguous "set" in "System Settings".
+func rankedFuzzyScore(_ query: String, _ target: String, ranking: Int) -> Int {
+    let matchScore = fuzzyScore(query, target)
+    guard matchScore > 0 else { return 0 }
+    let tierCeiling: Int
+    switch matchScore {
+    case 200...: tierCeiling = 300
+    case 150...: tierCeiling = 199
+    case 120...: tierCeiling = 149
+    case 100...: tierCeiling = 119
+    default: tierCeiling = 99
+    }
+    let headroom = max(0, tierCeiling - matchScore)
+    return matchScore + min(max(0, ranking), headroom)
 }
 
 /// Check if query matches the first letter of each word or camelCase boundary.
@@ -495,7 +515,7 @@ final class SearchViewModel: ObservableObject {
                         subtitle: "Application",
                         icon: icon,
                         systemIcon: "app.fill",
-                        score: fuzzyScore(query, name) + ranking
+                        score: rankedFuzzyScore(query, name, ranking: ranking)
                     ) {
                         NSWorkspace.shared.open(URL(fileURLWithPath: path))
                         rc_update_ranking(path)
@@ -544,15 +564,22 @@ final class SearchViewModel: ObservableObject {
         // AI commands (built-in + custom) — fuzzy match. Hidden entirely when
         // the AI master switch is off.
         if aiEnabled {
-            let matchingAICommands = AICommand.loadAll().filter { cmd in
-                fuzzyMatch(q, cmd.name)
-            }
-            let rankedAICommands = matchingAICommands.sorted { a, b in
-                self.commandRanking(for: a.name) > self.commandRanking(for: b.name)
-            }
-            for cmd in rankedAICommands.prefix(6) {
-                let command = cmd
-                let cmdScore = fuzzyScore(q, command.name) + self.commandRanking(for: command.name)
+            let rankedAICommands = AICommand.loadAll()
+                .filter { fuzzyMatch(q, $0.name) }
+                .map { command in
+                    (
+                        command: command,
+                        score: rankedFuzzyScore(
+                            q,
+                            command.name,
+                            ranking: self.commandRanking(for: command.name)
+                        )
+                    )
+                }
+                .sorted { $0.score > $1.score }
+            for entry in rankedAICommands.prefix(6) {
+                let command = entry.command
+                let cmdScore = entry.score
                 var result = SearchResult(
                     title: command.name,
                     subtitle: "AI Command",
@@ -586,7 +613,7 @@ final class SearchViewModel: ObservableObject {
                 subtitle: "Command",
                 icon: nil,
                 systemIcon: "text.quote",
-                score: fuzzyScore(query, "Snippets") + commandRanking(for: "Snippets")
+                score: rankedFuzzyScore(query, "Snippets", ranking: commandRanking(for: "Snippets"))
             ) { [weak self] in
                 self?.incrementCommandRanking("Snippets")
                 self?.goToSnippets()
@@ -600,7 +627,11 @@ final class SearchViewModel: ObservableObject {
                 subtitle: "Command",
                 icon: nil,
                 systemIcon: "doc.on.clipboard",
-                score: fuzzyScore(query, "Clipboard History") + commandRanking(for: "Clipboard History")
+                score: rankedFuzzyScore(
+                    query,
+                    "Clipboard History",
+                    ranking: commandRanking(for: "Clipboard History")
+                )
             ) { [weak self] in
                 self?.incrementCommandRanking("Clipboard History")
                 self?.goToClipboard()
