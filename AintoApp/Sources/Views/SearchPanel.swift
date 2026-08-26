@@ -412,9 +412,20 @@ final class SearchPanel: NSPanel {
         Task { @MainActor [weak self] in
             guard let self else { return }
 
+            // Prefer the Accessibility API: it reads the focused control's
+            // selection without replacing the user's clipboard. Apply the page
+            // transition while hidden so presentation measures the right view.
+            if let selection = AccessibilitySelectionReader.selectedText(from: previousApp) {
+                hidePanel()
+                completion(.success(selection))
+                presentPanel()
+                viewModel.focusFilterField()
+                return
+            }
+
             // Keep ClipboardMonitor and every other Ainto pasteboard user out
-            // of this multi-step copy transaction. Concurrent NSPasteboard
-            // reads mutate AppKit's internal type cache and can crash in
+            // of the synthetic-Copy fallback. Concurrent NSPasteboard reads
+            // mutate AppKit's internal type cache and can crash in
             // `_updateTypeCacheIfNeeded`.
             await PasteboardAccess.acquireExclusiveAccess()
 
