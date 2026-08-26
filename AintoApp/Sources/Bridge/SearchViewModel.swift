@@ -152,6 +152,7 @@ struct SearchResult: Identifiable {
     var score: Int = 0 // higher = better match, used for unified sorting
     let action: () -> Void
     var actions: [ActionItem] = [] // Cmd+K to show
+    var keepsPanelOpenAfterAction = false
 
     /// Resolved icon: app icon or SF Symbol fallback
     var displayIcon: NSImage {
@@ -577,6 +578,7 @@ final class SearchViewModel: ObservableObject {
                     self?.executeAICommand(command)
                 }
                 result.actions = aiCommandActions(for: command)
+                result.keepsPanelOpenAfterAction = true
                 commandResults.append(result)
             }
 
@@ -1178,6 +1180,7 @@ final class SearchViewModel: ObservableObject {
                     self?.executeAICommand(command)
                 }
                 result.actions = aiCommandActions(for: command)
+                result.keepsPanelOpenAfterAction = true
                 results.append(result)
             }
         }

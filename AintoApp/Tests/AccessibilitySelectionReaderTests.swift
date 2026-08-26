@@ -32,6 +32,40 @@ final class AccessibilitySelectionReaderTests: XCTestCase {
         XCTAssertEqual(result, "Text selected for translation")
     }
 
+    func testReadsWebKitTextMarkerSelection() {
+        let application = AXUIElementCreateSystemWide()
+        let focused = AXUIElementCreateSystemWide()
+        let markerRange = "opaque marker range" as CFString
+        let selection = "Selected text in Mail" as CFString
+
+        let result = AccessibilitySelectionReader.selectedText(
+            applicationElement: application,
+            readAttribute: { element, attribute, output in
+                if CFEqual(element, application),
+                   attribute == kAXFocusedUIElementAttribute as CFString {
+                    output.pointee = focused
+                    return .success
+                }
+                if CFEqual(element, focused),
+                   attribute == "AXSelectedTextMarkerRange" as CFString {
+                    output.pointee = markerRange
+                    return .success
+                }
+                return .attributeUnsupported
+            },
+            readParameterizedAttribute: { element, attribute, parameter, output in
+                guard CFEqual(element, focused),
+                      attribute == "AXStringForTextMarkerRange" as CFString,
+                      CFEqual(parameter, markerRange)
+                else { return .parameterizedAttributeUnsupported }
+                output.pointee = selection
+                return .success
+            }
+        )
+
+        XCTAssertEqual(result, "Selected text in Mail")
+    }
+
     func testReturnsNilWhenSelectedTextIsUnavailable() {
         let application = AXUIElementCreateSystemWide()
         let focused = AXUIElementCreateSystemWide()

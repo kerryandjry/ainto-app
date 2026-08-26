@@ -471,8 +471,11 @@ final class SearchPanel: NSPanel {
                     self.viewModel.claudeAsk()
                     return nil
                 }
+                let keepPanelOpen = self.viewModel.page == .main
+                    && self.viewModel.results.indices.contains(self.viewModel.selectedIndex)
+                    && self.viewModel.results[self.viewModel.selectedIndex].keepsPanelOpenAfterAction
                 self.viewModel.openSelected()
-                if self.viewModel.page == .main {
+                if self.viewModel.page == .main && !keepPanelOpen {
                     self.hidePanel()
                 }
                 return nil

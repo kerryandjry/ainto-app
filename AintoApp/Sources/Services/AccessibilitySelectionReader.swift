@@ -9,6 +9,20 @@ enum AccessibilitySelectionReader {
         CFString,
         UnsafeMutablePointer<CFTypeRef?>
     ) -> AXError
+    typealias ParameterizedAttributeReader = (
+        AXUIElement,
+        CFString,
+        CFTypeRef,
+        UnsafeMutablePointer<CFTypeRef?>
+    ) -> AXError
+
+    private static var selectedTextMarkerRange: CFString {
+        "AXSelectedTextMarkerRange" as CFString
+    }
+
+    private static var stringForTextMarkerRange: CFString {
+        "AXStringForTextMarkerRange" as CFString
+    }
 
     static func selectedText(from application: NSRunningApplication) -> String? {
         let applicationElement = AXUIElementCreateApplication(application.processIdentifier)
@@ -17,7 +31,9 @@ enum AccessibilitySelectionReader {
 
     static func selectedText(
         applicationElement: AXUIElement,
-        readAttribute: AttributeReader = AXUIElementCopyAttributeValue
+        readAttribute: AttributeReader = AXUIElementCopyAttributeValue,
+        readParameterizedAttribute: ParameterizedAttributeReader =
+            AXUIElementCopyParameterizedAttributeValue
     ) -> String? {
         var focusedValue: CFTypeRef?
         guard readAttribute(
@@ -31,14 +47,37 @@ enum AccessibilitySelectionReader {
 
         let focusedElement = unsafeDowncast(focusedValue, to: AXUIElement.self)
         var selectedValue: CFTypeRef?
-        guard readAttribute(
+        if readAttribute(
             focusedElement,
             kAXSelectedTextAttribute as CFString,
             &selectedValue
         ) == .success,
-            let selectedText = selectedValue as? String,
-            !selectedText.isEmpty
+           let selectedText = selectedValue as? String,
+           !selectedText.isEmpty {
+            return selectedText
+        }
+
+        // WebKit-backed controls, including Mail's message viewer, commonly
+        // expose selections as text-marker ranges instead of AXSelectedText.
+        var markerRange: CFTypeRef?
+        guard readAttribute(
+            focusedElement,
+            selectedTextMarkerRange,
+            &markerRange
+        ) == .success,
+            let markerRange
         else { return nil }
-        return selectedText
+
+        var markerTextValue: CFTypeRef?
+        guard readParameterizedAttribute(
+            focusedElement,
+            stringForTextMarkerRange,
+            markerRange,
+            &markerTextValue
+        ) == .success,
+            let markerText = markerTextValue as? String,
+            !markerText.isEmpty
+        else { return nil }
+        return markerText
     }
 }
