@@ -150,6 +150,18 @@ final class SearchPanel: NSPanel {
     func grabSelectionFromPreviousApp(completion: @escaping (String) -> Void) {
         Task { @MainActor [weak self] in
             guard let self else { return }
+
+            // Prefer the Accessibility API: it reads the focused control's
+            // selection without replacing the user's clipboard. Fall back to
+            // synthetic Copy for applications that do not expose selected text.
+            if let previousApp,
+               let selection = AccessibilitySelectionReader.selectedText(from: previousApp) {
+                hidePanel()
+                completion(selection)
+                makeKeyAndOrderFront(nil)
+                return
+            }
+
             await PasteboardAccess.acquireExclusiveAccess()
 
             let pasteboard = NSPasteboard.general
