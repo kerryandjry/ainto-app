@@ -48,6 +48,7 @@ extension SearchViewModel {
                 self?.executeAICommand(command)
             }
             result.actions = aiCommandActions(for: command)
+            result.keepsPanelOpenAfterAction = true
             return result
         case .snippet:
             return snippetResult(targetID: target.id)

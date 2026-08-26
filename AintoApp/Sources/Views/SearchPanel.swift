@@ -432,7 +432,9 @@ final class SearchPanel: NSPanel {
             let pasteboard = NSPasteboard.general
             guard let previousItems = PasteboardAccess.snapshotItems(from: pasteboard) else {
                 PasteboardAccess.endExclusiveAccess()
+                hidePanel()
                 completion(.failure("Ainto could not safely preserve the current clipboard."))
+                presentPanel()
                 viewModel.focusFilterField()
                 return
             }

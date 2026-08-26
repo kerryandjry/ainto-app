@@ -795,6 +795,7 @@ final class SearchViewModel: ObservableObject {
                     self?.executeAICommand(command)
                 }
                 result.actions = aiCommandActions(for: command)
+                result.keepsPanelOpenAfterAction = true
                 commandResults.append(result)
             }
 
@@ -1624,6 +1625,7 @@ final class SearchViewModel: ObservableObject {
                     self?.executeAICommand(command)
                 }
                 result.actions = aiCommandActions(for: command)
+                result.keepsPanelOpenAfterAction = true
                 results.append(result)
             }
         }
