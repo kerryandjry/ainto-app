@@ -29,10 +29,15 @@
 ---
 
 > [!IMPORTANT]
-> This `local/integrated-testing` branch is a personal integration build used to
-> validate features before they are split into focused upstream pull requests.
-> The download button above points to the official upstream release and may not
-> include everything documented below.
+> This is the personal GPLv3 downstream fork maintained at
+> [kerryandjry/ainto-app](https://github.com/kerryandjry/ainto-app), based on
+> [Ainto by ainto-labs](https://github.com/ainto-labs/ainto-app).
+> The download button above is the **original upstream app**, not this fork.
+> This fork removes Snippets (including global text expansion); existing
+> `snippets.toml` data is left untouched and legacy snippet aliases are inactive.
+> Updates are manual: the upstream Sparkle feed is disabled to prevent replacing
+> this build with the original app. Build locally; no signed/notarized downstream
+> distributable is offered yet. See [downstream notes](docs/downstream.md).
 
 ## Features
 
@@ -107,7 +112,7 @@ flowchart TD
 - **Clipboard list.** An `NSTableView` with cell reuse, fed by paginated and debounced SQLite queries — the list scrolls and searches smoothly however large the history grows.
 - **Input.** A non-activating `NSPanel` that preserves the foreground app. The launcher and optional target shortcuts use registered system hotkeys.
 - **Local-first.** Everything lives under `~/.config/ainto/` — SQLite for clipboard history, TOML for config, AI commands, and rankings. No telemetry.
-- **Updates.** Builds are signed, notarized, and delivered over [Sparkle](https://sparkle-project.org/).
+- **Updates.** This downstream build uses manual updates. The upstream Sparkle feed is disabled; local ad-hoc builds are not notarized.
 
 ## Build
 

@@ -1,4 +1,4 @@
-// swiftlint:disable file_length function_body_length identifier_name line_length
+// swiftlint:disable file_length function_body_length identifier_name line_length type_body_length
 import SwiftUI
 import AppKit
 import AintoCore
@@ -450,7 +450,7 @@ struct SettingsView: View {
                     NSWorkspace.shared.open(URL(string: "https://github.com/ainto-labs/ainto-app")!)
                 }
                 AboutButton(title: "Report Issue", icon: "exclamationmark.bubble") {
-                    NSWorkspace.shared.open(URL(string: "https://github.com/ainto-labs/ainto-app/issues")!)
+                    NSWorkspace.shared.open(URL(string: "https://github.com/kerryandjry/ainto-app/issues")!)
                 }
             }
 
@@ -458,8 +458,8 @@ struct SettingsView: View {
                 AboutButton(title: "ainto.app", icon: "globe") {
                     NSWorkspace.shared.open(URL(string: "https://ainto.app")!)
                 }
-                AboutButton(title: "Check for Updates", icon: "arrow.triangle.2.circlepath") {
-                    (NSApp.delegate as? AppDelegate)?.updater?.checkForUpdates()
+                AboutButton(title: "Downstream Updates", icon: "arrow.up.right.square") {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/kerryandjry/ainto-app")!)
                 }
             }
 
