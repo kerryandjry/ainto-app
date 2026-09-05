@@ -352,7 +352,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let _ = rc_clipboard_init(UInt64(maxText), UInt64(maxImage))
 
         // Discover apps (without icons — Swift loads icons via NSWorkspace)
-        let _ = rc_discover_apps(false)
+        if let discovered = rc_discover_apps(false) {
+            rc_free_string(discovered)
+        }
     }
 
     private func loadClipboardLimits() -> (text: Int, image: Int) {
