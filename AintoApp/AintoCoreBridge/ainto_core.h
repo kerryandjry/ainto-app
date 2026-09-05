@@ -112,7 +112,7 @@ int32_t rc_clipboard_clear(void);
 // Global Aliases
 // ============================================================
 
-/// Load aliases as JSON array.
+/// Load aliases as JSON array; null on read/validation failure, [] if missing.
 const char* rc_aliases_load(void);
 
 /// Validate and save aliases from a JSON array. Returns 0 on success.

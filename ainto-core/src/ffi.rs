@@ -635,10 +635,12 @@ pub extern "C" fn rc_clipboard_clear() -> i32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_aliases_load() -> *const c_char {
-    let path = config::config_dir()
-        .map(|directory| directory.join("aliases.toml"))
-        .unwrap_or_default();
-    let entries = aliases::load_aliases(&path).unwrap_or_default();
+    let Ok(directory) = config::config_dir() else {
+        return ptr::null();
+    };
+    let Ok(entries) = aliases::load_aliases(&directory.join("aliases.toml")) else {
+        return ptr::null();
+    };
     to_c_string(&serde_json::to_string(&entries).unwrap_or_else(|_| "[]".into()))
 }
 

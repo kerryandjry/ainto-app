@@ -149,6 +149,26 @@ final class LauncherNavigationTests: XCTestCase {
         XCTAssertEqual(viewModel.query, "unfinished follow-up")
     }
 
+    func testImageOnlyFollowUpSurvivesStalePanel() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data([1, 2, 3]).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let viewModel = makeViewModel(page: .claude)
+        viewModel.claudePendingAttachments = [ClaudeImageAttachment(url: url, displayName: "draft.png")]
+        XCTAssertFalse(viewModel.popToRootIfStale(hiddenFor: 91))
+        XCTAssertEqual(viewModel.page, .claude)
+        XCTAssertEqual(viewModel.claudePendingAttachments.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testImportInProgressSurvivesStalePanel() {
+        let viewModel = makeViewModel(page: .claude)
+        XCTAssertTrue(viewModel.beginClaudeImageImport())
+        defer { viewModel.cancelClaudeImageImport() }
+        XCTAssertFalse(viewModel.popToRootIfStale(hiddenFor: 91))
+        XCTAssertEqual(viewModel.page, .claude)
+    }
+
     private func makeViewModel(
         page: LauncherPage,
         delay: Int = 90

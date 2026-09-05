@@ -19,6 +19,27 @@ final class AliasServiceTests: XCTestCase {
         XCTAssertNil(AliasStore.validate(entries))
     }
 
+    func testFailedReloadPreservesDraftAndBlocksSaveUntilRecovery() {
+        let original = LauncherAlias(alias: "sleep", targetType: .systemAction, targetID: "sleep")
+        var draft = AliasSettingsDraft(savedAliases: [original])
+        draft.reload(nil)
+        var saves = 0
+        let rejected = draft.commit([]) { _ in
+            saves += 1
+            return .success(())
+        }
+        if case .success = rejected { XCTFail("Unreadable aliases must not be saved") }
+        XCTAssertEqual(saves, 0)
+        XCTAssertEqual(draft.aliases, [original])
+        draft.reload([original])
+        let accepted = draft.commit([]) { _ in
+            saves += 1
+            return .success(())
+        }
+        if case .failure = accepted { XCTFail("Successful reload must reopen the save gate") }
+        XCTAssertEqual(saves, 1)
+    }
+
     func testNormalizationIsUnicodeCaseInsensitive() {
         XCTAssertEqual(AliasStore.normalize("  Straße  "), AliasStore.normalize("STRASSE"))
     }

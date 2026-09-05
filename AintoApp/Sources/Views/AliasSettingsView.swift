@@ -215,8 +215,9 @@ struct AliasSettingsView: View {
     }
 
     private func reloadSavedAliases() {
-        draft.reload(AliasStore.load())
-        validationError = nil
+        let loaded = AliasStore.load()
+        draft.reload(loaded)
+        validationError = loaded == nil ? AliasSaveError.unreadable.message : nil
         savedMessage = nil
     }
 

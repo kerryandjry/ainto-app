@@ -147,7 +147,8 @@ final class AliasHotkeyManager {
 
     func reload() {
         guard !isSuspended else { return }
-        hotKeys = AliasStore.load().compactMap { entry in
+        guard let aliases = AliasStore.load() else { return }
+        hotKeys = aliases.compactMap { entry in
             guard entry.isActive, let binding = entry.hotkey,
                   !HotkeyConfig.isLauncherHotkey(binding)
             else { return nil }

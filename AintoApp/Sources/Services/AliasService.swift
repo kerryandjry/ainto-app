@@ -89,12 +89,14 @@ struct AliasTargetOption: Identifiable, Hashable {
 enum AliasSaveError: Error {
     case validation(String)
     case encoding
+    case unreadable
     case core(Int32)
 
     var message: String {
         switch self {
         case .validation(let message): return message
         case .encoding: return "Aliases and shortcuts could not be encoded."
+        case .unreadable: return "Cannot read aliases.toml. Repair the file and reopen Settings before saving."
         case .core(-2): return "Aliases and shortcuts used an unsupported data format."
         case .core(-3): return "Ainto could not locate its configuration directory."
         case .core(-4): return "Ainto could not validate or write aliases.toml."
@@ -106,13 +108,16 @@ enum AliasSaveError: Error {
 struct AliasSettingsDraft {
     private(set) var aliases: [LauncherAlias]
     private var savedAliases: [LauncherAlias]
+    private var canSave = true
 
     init(savedAliases: [LauncherAlias] = []) {
         aliases = savedAliases
         self.savedAliases = savedAliases
     }
 
-    mutating func reload(_ savedAliases: [LauncherAlias]) {
+    mutating func reload(_ savedAliases: [LauncherAlias]?) {
+        canSave = savedAliases != nil
+        guard let savedAliases else { return }
         aliases = savedAliases
         self.savedAliases = savedAliases
     }
@@ -122,6 +127,7 @@ struct AliasSettingsDraft {
         _ candidate: [LauncherAlias],
         save: ([LauncherAlias]) -> Result<Void, AliasSaveError> = AliasStore.save
     ) -> Result<Void, AliasSaveError> {
+        guard canSave else { return .failure(.unreadable) }
         let normalized = candidate.map { entry in
             var entry = entry
             entry.alias = entry.alias.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -153,12 +159,12 @@ enum AliasStore {
             .precomposedStringWithCompatibilityMapping
     }
 
-    static func load() -> [LauncherAlias] {
-        guard let cString = rc_aliases_load() else { return [] }
+    static func load() -> [LauncherAlias]? {
+        guard let cString = rc_aliases_load() else { return nil }
         defer { rc_free_string(cString) }
         let json = String(cString: cString)
-        guard let data = json.data(using: .utf8) else { return [] }
-        return (try? JSONDecoder().decode([LauncherAlias].self, from: data)) ?? []
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode([LauncherAlias].self, from: data)
     }
 
     static func validate(_ aliases: [LauncherAlias]) -> String? {

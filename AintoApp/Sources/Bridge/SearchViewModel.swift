@@ -548,7 +548,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     func reloadAliases() {
-        aliases = AliasStore.load()
+        if let loaded = AliasStore.load() { aliases = loaded }
     }
 
     func prepareForPanelHide() {
@@ -617,7 +617,8 @@ final class SearchViewModel: ObservableObject {
         }
 
         guard !isEditingAICommand, !claudeIsStreaming else { return false }
-        guard page != .claude || query.isEmpty else { return false }
+        guard page != .claude || (query.isEmpty
+            && claudePendingAttachments.isEmpty && !claudeAttachmentIsImporting) else { return false }
         popToRoot()
         return true
     }

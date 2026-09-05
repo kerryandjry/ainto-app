@@ -89,6 +89,8 @@ pub fn load_aliases(path: &Path) -> Result<Vec<AliasEntry>, Error> {
 
 pub fn save_aliases(path: &Path, aliases: &[AliasEntry]) -> Result<(), String> {
     validate_aliases(aliases)?;
+    // Do not replace a file that became unreadable since the UI loaded it.
+    load_aliases(path).map_err(|error| error.to_string())?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -119,7 +121,8 @@ mod tests {
 
     #[test]
     fn retired_snippet_aliases_round_trip_without_reserving_bindings() {
-        let path = std::env::temp_dir().join(format!("ainto-retired-{}.toml", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("ainto-retired-{}.toml", uuid::Uuid::new_v4()));
         let mut retired = entry("files");
         retired.target_type = "snippet".into();
         retired.hotkey_key_code = Some(8);
@@ -133,6 +136,17 @@ mod tests {
         assert_eq!(loaded[0].target_type, "snippet");
         assert_eq!(loaded[0].hotkey_key_code, Some(8));
         assert!(validate_aliases(&loaded).is_ok());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn saving_refuses_to_overwrite_malformed_aliases() {
+        let path = std::env::temp_dir().join(format!("ainto-invalid-{}.toml", uuid::Uuid::new_v4()));
+        let original = "[[aliases]\nbroken =";
+        std::fs::write(&path, original).unwrap();
+        assert!(load_aliases(&path).is_err());
+        assert!(save_aliases(&path, &[entry("files")]).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
         std::fs::remove_file(path).unwrap();
     }
 
