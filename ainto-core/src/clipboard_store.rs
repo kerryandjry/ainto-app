@@ -134,12 +134,18 @@ impl ClipboardStore {
             .unwrap_or_default()
             .as_secs() as i64;
 
-        // Check for duplicate
+        // A file path and literal text can have identical bytes and hashes.
+        let content_type = match content {
+            ClipboardContent::Text(_) => "text",
+            ClipboardContent::Image { .. } => "image",
+            ClipboardContent::File { .. } => "file",
+        };
+        // Keep existing persisted hashes compatible, but separate content types.
         let existing: Option<i64> = self
             .db
             .query_row(
-                "SELECT id FROM clipboard_items WHERE hash = ?1",
-                params![hash as i64],
+                "SELECT id FROM clipboard_items WHERE hash = ?1 AND content_type = ?2",
+                params![hash as i64, content_type],
                 |row| row.get(0),
             )
             .ok();
@@ -460,6 +466,23 @@ mod tests {
         assert_eq!(all.len(), 50);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn file_paths_and_literal_text_do_not_deduplicate_each_other() {
+        for file_first in [false, true] {
+            let (mut store, dir) = temp_store();
+            let text = ClipboardContent::Text("/tmp/report.txt".into());
+            let file = ClipboardContent::File { path: "/tmp/report.txt".into() };
+            let (first, second) = if file_first { (&file, &text) } else { (&text, &file) };
+            let first_id = store.insert(first, hash_content(first), None).unwrap();
+            let second_id = store.insert(second, hash_content(second), None).unwrap();
+            assert_ne!(first_id, second_id);
+            assert_eq!(store.insert(first, hash_content(first), None).unwrap(), first_id);
+            assert_eq!(store.get_recent_paged(10, 0, TypeFilter::All).unwrap().len(), 2);
+            drop(store);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     /// Search results keep their image filename so the row can render a thumbnail.
