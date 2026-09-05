@@ -6,6 +6,19 @@ import XCTest
 #endif
 
 final class AliasServiceTests: XCTestCase {
+    func testRetiredSnippetAliasesAreDormantAndDoNotReserveBindings() throws {
+        let hotkey = LauncherHotkey(keyCode: 8, modifiers: 2048, display: "⌥ C")
+        let retired = LauncherAlias(alias: "files", hotkey: hotkey, targetType: .snippet, targetID: "old-id")
+        let active = LauncherAlias(alias: "files", hotkey: hotkey, targetType: .launcherCommand, targetID: "file-search")
+        let entries = try JSONDecoder().decode(
+            [LauncherAlias].self, from: JSONEncoder().encode([retired, active])
+        )
+        XCTAssertEqual(entries, [retired, active])
+        XCTAssertFalse(entries[0].isActive)
+        XCTAssertTrue(entries[1].isActive)
+        XCTAssertNil(AliasStore.validate(entries))
+    }
+
     func testNormalizationIsUnicodeCaseInsensitive() {
         XCTAssertEqual(AliasStore.normalize("  Straße  "), AliasStore.normalize("STRASSE"))
     }

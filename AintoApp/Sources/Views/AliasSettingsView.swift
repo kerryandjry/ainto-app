@@ -248,26 +248,8 @@ struct AliasSettingsView: View {
                 detail: "AI Command"
             )
         }
-        options += loadSnippetTargets()
         options += loadAppTargets()
         return options.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-    }
-
-    private static func loadSnippetTargets() -> [AliasTargetOption] {
-        guard let cString = rc_snippets_load() else { return [] }
-        defer { rc_free_string(cString) }
-        let json = String(cString: cString)
-        guard let data = json.data(using: .utf8),
-              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        else { return [] }
-        return entries.compactMap { entry in
-            guard let id = entry["id"] as? String else { return nil }
-            return AliasTargetOption(
-                ref: LauncherTargetRef(kind: .snippet, id: id),
-                title: entry["name"] as? String ?? "Untitled Snippet",
-                detail: "Snippet"
-            )
-        }
     }
 
     private static func loadAppTargets() -> [AliasTargetOption] {

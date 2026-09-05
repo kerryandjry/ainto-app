@@ -8,7 +8,7 @@ import XCTest
 @MainActor
 final class ClaudeViewModelTests: XCTestCase {
     func testOverloadErrorOffersRetry() {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.claudeMessages = [
             ClaudeMessage(role: .user, text: "Translate this"),
             ClaudeMessage(role: .assistant, text: "API Error: 529 Overloaded"),
@@ -18,7 +18,7 @@ final class ClaudeViewModelTests: XCTestCase {
     }
 
     func testOrdinaryAssistantResponseDoesNotOfferRetry() {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.claudeMessages = [
             ClaudeMessage(role: .user, text: "Translate this"),
             ClaudeMessage(role: .assistant, text: "翻譯結果"),

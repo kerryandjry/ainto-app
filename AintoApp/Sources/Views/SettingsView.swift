@@ -17,13 +17,11 @@ struct SettingsView: View {
     @State private var clipboardImagePath: String = "~/.config/ainto/clipboard"
     @State private var claudeBinary: String = "claude"
     @State private var aiEnabled: Bool = true
-    @State private var snippetsEnabled: Bool = true
     @State private var fileSearchPaths: [String] = [NSHomeDirectory()]
     @State private var fileSearchAllLocations = false
     @State private var fileSearchIncludeHidden = false
     @State private var homeClipboardHistory = true
     @State private var homeFileSearch = true
-    @State private var homeSnippets = true
     @State private var homeAICommands = true
     @State private var homeAICommandIDs: [String] = []
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
@@ -38,7 +36,6 @@ struct SettingsView: View {
         case general = "General"
         case clipboard = "Clipboard"
         case ai = "AI"
-        case snippets = "Snippets"
         case fileSearch = "File Search"
         case home = "Home Items"
         case aliases = "Aliases"
@@ -50,7 +47,6 @@ struct SettingsView: View {
             case .general: return "gearshape"
             case .clipboard: return "doc.on.clipboard"
             case .ai: return "sparkle"
-            case .snippets: return "text.quote"
             case .fileSearch: return "doc.text.magnifyingglass"
             case .home: return "house"
             case .aliases: return "arrow.triangle.branch"
@@ -86,13 +82,11 @@ struct SettingsView: View {
                     case .general: generalSection
                     case .clipboard: clipboardSection
                     case .ai: aiSection
-                    case .snippets: snippetsSection
                     case .fileSearch: fileSearchSection
                     case .home:
                         HomeItemsSettingsView(
                             clipboardHistory: $homeClipboardHistory,
                             fileSearch: $homeFileSearch,
-                            snippets: $homeSnippets,
                             aiCommands: $homeAICommands,
                             selectedAICommandIDs: $homeAICommandIDs,
                             aiEnabled: aiEnabled
@@ -116,14 +110,12 @@ struct SettingsView: View {
         .onChange(of: clipboardMaxImageItems) { _, _ in saveConfig(); applyClipboardLimits() }
         .onChange(of: claudeBinary) { _, _ in saveConfig() }
         .onChange(of: aiEnabled) { _, _ in saveConfig() }
-        .onChange(of: snippetsEnabled) { _, _ in saveConfig() }
         .onChange(of: popToRootSeconds) { _, _ in saveConfig() }
         .onChange(of: fileSearchPaths) { _, _ in saveConfig() }
         .onChange(of: fileSearchAllLocations) { _, _ in saveConfig() }
         .onChange(of: fileSearchIncludeHidden) { _, _ in saveConfig() }
         .onChange(of: homeClipboardHistory) { _, _ in saveConfig() }
         .onChange(of: homeFileSearch) { _, _ in saveConfig() }
-        .onChange(of: homeSnippets) { _, _ in saveConfig() }
         .onChange(of: homeAICommands) { _, _ in saveConfig() }
         .onChange(of: homeAICommandIDs) { _, _ in saveConfig() }
         .alert("Reset Rankings", isPresented: $showResetConfirm) {
@@ -202,7 +194,7 @@ struct SettingsView: View {
                 }
             }
 
-            Text("Reopening the launcher after longer than this returns to the search page instead of the clipboard, snippet, AI command or Claude page it was left on.")
+            Text("Reopening the launcher after longer than this returns to the search page instead of the clipboard, AI command or Claude page it was left on.")
                 .font(.system(size: 12))
                 .foregroundStyle(.tertiary)
                 .padding(.leading, 4)
@@ -369,47 +361,6 @@ struct SettingsView: View {
                     .foregroundStyle(.tertiary)
                     .padding(.leading, 4)
             }
-        }
-    }
-
-    // MARK: - Snippets
-
-    private var snippetsSection: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            SectionHeader(title: "Snippets", icon: "text.quote")
-
-            SettingsCard {
-                VStack(spacing: 16) {
-                    SettingsRow(label: "Text expansion") {
-                        Toggle("", isOn: $snippetsEnabled).labelsHidden().toggleStyle(.switch)
-                    }
-
-                    Divider().opacity(0.3)
-
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("snippets.toml")
-                                .font(.system(size: 13))
-                            Text("Manage snippet keywords and expansions")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.tertiary)
-                        }
-                        Spacer()
-                        Button("Edit") {
-                            let path = ("~/.config/ainto/snippets.toml" as NSString).expandingTildeInPath
-                            NSWorkspace.shared.open(URL(fileURLWithPath: path))
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 13))
-                        .foregroundColor(.accentColor)
-                    }
-                }
-            }
-
-            Text("Snippets expand automatically when you type their keyword in any app. Requires Accessibility permission.")
-                .font(.system(size: 12))
-                .foregroundStyle(.tertiary)
-                .padding(.leading, 4)
         }
     }
 
@@ -590,14 +541,12 @@ private extension SettingsView {
         clipboardMaxImageItems = config["clipboard_max_image_items"] as? Int ?? 50
         claudeBinary = config["claude_binary"] as? String ?? "claude"
         aiEnabled = config["ai_enabled"] as? Bool ?? true
-        snippetsEnabled = config["snippets_enabled"] as? Bool ?? true
         popToRootSeconds = config["pop_to_root_seconds"] as? Int ?? 90
         fileSearchPaths = config["file_search_paths"] as? [String] ?? [NSHomeDirectory()]
         fileSearchAllLocations = config["file_search_all_locations"] as? Bool ?? false
         fileSearchIncludeHidden = config["file_search_include_hidden"] as? Bool ?? false
         homeClipboardHistory = config["home_clipboard_history"] as? Bool ?? true
         homeFileSearch = config["home_file_search"] as? Bool ?? true
-        homeSnippets = config["home_snippets"] as? Bool ?? true
         homeAICommands = config["home_ai_commands"] as? Bool ?? true
 
         let availableCommands = AICommand.loadAll()
@@ -645,14 +594,12 @@ private extension SettingsView {
         config["clipboard_max_image_items"] = clipboardMaxImageItems
         config["claude_binary"] = claudeBinary
         config["ai_enabled"] = aiEnabled
-        config["snippets_enabled"] = snippetsEnabled
         config["pop_to_root_seconds"] = popToRootSeconds
         config["file_search_paths"] = fileSearchPaths
         config["file_search_all_locations"] = fileSearchAllLocations
         config["file_search_include_hidden"] = fileSearchIncludeHidden
         config["home_clipboard_history"] = homeClipboardHistory
         config["home_file_search"] = homeFileSearch
-        config["home_snippets"] = homeSnippets
         config["home_ai_commands"] = homeAICommands
         config["home_ai_command_ids"] = homeAICommandIDs
         guard let data = try? JSONSerialization.data(withJSONObject: config),

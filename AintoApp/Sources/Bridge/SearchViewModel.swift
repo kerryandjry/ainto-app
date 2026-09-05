@@ -141,7 +141,6 @@ enum ClaudeRole {
 enum LauncherPage: Equatable {
     case main
     case clipboard
-    case snippets
     case aiCommands
     case fileSearch
     case systemConfirmation
@@ -161,7 +160,6 @@ enum SelectionCaptureResult {
 struct HomeItemConfiguration: Equatable {
     let clipboardHistory: Bool
     let fileSearch: Bool
-    let snippets: Bool
     let aiCommands: Bool
 
     /// Hide built-in Home items until config has loaded successfully. This
@@ -170,26 +168,22 @@ struct HomeItemConfiguration: Equatable {
     static let hidden = HomeItemConfiguration(
         clipboardHistory: false,
         fileSearch: false,
-        snippets: false,
         aiCommands: false
     )
 
     init(config: [String: Any]) {
         clipboardHistory = config["home_clipboard_history"] as? Bool ?? true
         fileSearch = config["home_file_search"] as? Bool ?? true
-        snippets = config["home_snippets"] as? Bool ?? true
         aiCommands = config["home_ai_commands"] as? Bool ?? true
     }
 
     private init(
         clipboardHistory: Bool,
         fileSearch: Bool,
-        snippets: Bool,
         aiCommands: Bool
     ) {
         self.clipboardHistory = clipboardHistory
         self.fileSearch = fileSearch
-        self.snippets = snippets
         self.aiCommands = aiCommands
     }
 }
@@ -343,18 +337,6 @@ struct ClipboardItem: Identifiable {
     }
 }
 
-/// Snippet item model.
-struct SnippetItem: Identifiable {
-    var id: String
-    var name: String
-    var keyword: String
-    var expansion: String
-
-    static func new() -> SnippetItem {
-        SnippetItem(id: UUID().uuidString, name: "", keyword: "", expansion: "")
-    }
-}
-
 /// ViewModel managing search state and Rust FFI calls.
 @MainActor
 final class SearchViewModel: ObservableObject {
@@ -379,17 +361,6 @@ final class SearchViewModel: ObservableObject {
     @Published var claudeAttachmentIsImporting = false
     private var claudeSession: UnsafeMutableRawPointer?
     private var claudeSessionId: String?
-
-    // Snippet state.
-    // `snippetsLoaded` stays false until the file has been read successfully;
-    // it guards saving so an unreadable file is never overwritten with an
-    // empty list. Same pattern as `hasLoaded` in SettingsView.
-    private var snippetsLoaded = false
-    @Published var snippets: [SnippetItem] = []
-    @Published var snippetSelectedIndex: Int = 0
-    @Published var snippetFilter: String = ""
-    @Published var isEditingSnippet = false
-    @Published var editingSnippet: SnippetItem?
 
     // AI master switch (config: ai_enabled). When false, all AI surfaces
     // are hidden from the launcher.
@@ -485,11 +456,21 @@ final class SearchViewModel: ObservableObject {
     /// Bypasses @Published to avoid SwiftUI re-render on every arrow key.
     var onClipboardSelectionMove: ((_ newIndex: Int) -> Void)?
 
-    /// Callback to reload text expander snippets (set by AppDelegate)
-    var onSnippetsChanged: (() -> Void)?
+    private let writeInstantAnswer: (String) -> Void
 
-    init() {
-        ClaudeImageAttachmentStore.removeStaleAttachments()
+    init(
+        cleanStaleAttachments: Bool = true,
+        writeInstantAnswer: @escaping (String) -> Void = { value in
+            PasteboardAccess.withPasteboard { pasteboard in
+                pasteboard.clearContents()
+                pasteboard.setString(value, forType: .string)
+            }
+        }
+    ) {
+        self.writeInstantAnswer = writeInstantAnswer
+        if cleanStaleAttachments {
+            ClaudeImageAttachmentStore.removeStaleAttachments()
+        }
     }
 
     var statusText: String {
@@ -539,16 +520,6 @@ final class SearchViewModel: ObservableObject {
     }
 
     // MARK: - Navigation
-
-    func goToSnippets() {
-        page = .snippets
-        snippetFilter = ""
-        snippetSelectedIndex = 0
-        isEditingSnippet = false
-        editingSnippet = nil
-        loadSnippets()
-        focusFilterField()
-    }
 
     func goToAICommands() {
         page = .aiCommands
@@ -627,8 +598,7 @@ final class SearchViewModel: ObservableObject {
     /// Return to search when the launcher has been hidden long enough that the
     /// next invocation is a new task rather than a continuation of the last one.
     ///
-    /// Held back whenever popping would throw work away: a half-written snippet
-    /// or AI command that has not been saved, a Claude response still
+    /// Held back whenever popping would throw work away: a half-written AI command that has not been saved, a Claude response still
     /// streaming, or an unsent Claude follow-up. Those stay put however long
     /// the panel was hidden.
     /// Returns whether it popped, so the caller can re-place a panel whose
@@ -646,7 +616,7 @@ final class SearchViewModel: ObservableObject {
             return true
         }
 
-        guard !isEditingSnippet, !isEditingAICommand, !claudeIsStreaming else { return false }
+        guard !isEditingAICommand, !claudeIsStreaming else { return false }
         guard page != .claude || query.isEmpty else { return false }
         popToRoot()
         return true
@@ -740,24 +710,6 @@ final class SearchViewModel: ObservableObject {
             }
         }
 
-        // Search snippets. Uses the in-memory copy — refreshed when the panel
-        // opens and by the config watcher — so a keystroke never reads disk.
-        let snippetResults: [SearchResult] = snippets
-            .filter { fuzzyMatch(query, $0.name) || fuzzyMatch(query, $0.keyword) }
-            .prefix(5)
-            .map { snippet in
-                let expansion = snippet.expansion
-                return SearchResult(
-                    title: snippet.name,
-                    subtitle: "Snippet: \(snippet.keyword)",
-                    icon: nil,
-                    systemIcon: "doc.text.fill",
-                    targetRef: LauncherTargetRef(kind: .snippet, id: snippet.id)
-                ) { [weak self] in
-                    self?.expandAndPasteSnippet(expansion)
-                }
-            }
-
         // Built-in commands that fuzzy match
         var commandResults: [SearchResult] = []
         let q = query.lowercased()
@@ -812,20 +764,6 @@ final class SearchViewModel: ObservableObject {
             }
         }
 
-        if fuzzyMatch(q, "snippets") {
-            let r = SearchResult(
-                title: "Snippets",
-                subtitle: "Command",
-                icon: nil,
-                systemIcon: "text.quote",
-                score: rankedFuzzyScore(query, "Snippets", ranking: commandRanking(for: "Snippets"))
-            ) { [weak self] in
-                self?.incrementCommandRanking("Snippets")
-                self?.goToSnippets()
-            }
-            commandResults.append(r)
-        }
-
         if fuzzyMatch(q, "clipboard history") {
             let r = SearchResult(
                 title: "Clipboard History",
@@ -853,7 +791,7 @@ final class SearchViewModel: ObservableObject {
             commandResults.append(systemActionResult(action, score: fuzzyScore(q, action.title)))
         }
 
-        var allResults = appResults + commandResults + snippetResults
+        var allResults = appResults + commandResults
         if let aliasResult = resolvedAliasResult(for: query) {
             if let target = aliasResult.targetRef {
                 allResults.removeAll { $0.targetRef == target }
@@ -973,10 +911,7 @@ final class SearchViewModel: ObservableObject {
     }
 
     private func copyInstantAnswer(_ value: String) {
-        PasteboardAccess.withPasteboard { pasteboard in
-            pasteboard.clearContents()
-            pasteboard.setString(value, forType: .string)
-        }
+        writeInstantAnswer(value)
     }
 
     private func pasteInstantAnswer(_ value: String) {
@@ -991,10 +926,6 @@ final class SearchViewModel: ObservableObject {
             guard count > 0 else { return }
             clipboardSelectedIndex = max(0, min(clipboardSelectedIndex + offset, count - 1))
             onClipboardSelectionMove?(clipboardSelectedIndex)
-        case .snippets:
-            let count = filteredSnippets.count
-            guard count > 0 else { return }
-            snippetSelectedIndex = max(0, min(snippetSelectedIndex + offset, count - 1))
         case .aiCommands:
             let count = filteredAICommands.count
             guard count > 0 else { return }
@@ -1013,8 +944,6 @@ final class SearchViewModel: ObservableObject {
         switch page {
         case .clipboard:
             pasteSelectedClipboardItem()
-        case .snippets:
-            expandSelectedSnippet()
         case .aiCommands:
             executeSelectedAICommand()
         case .fileSearch:
@@ -1184,113 +1113,6 @@ final class SearchViewModel: ObservableObject {
     func deleteClipboardItem(id: Int64) {
         let _ = rc_clipboard_delete(id)
         loadClipboardItems()
-    }
-
-    // MARK: - Snippets
-
-    func loadSnippets() {
-        // A later reload can fail after an earlier one succeeded. Close the
-        // save gate before every attempt so stale in-memory data can never
-        // overwrite a file that is currently unreadable.
-        snippetsLoaded = false
-        guard let cStr = rc_snippets_load() else { return }
-        let jsonStr = String(cString: cStr)
-        rc_free_string(cStr)
-
-        guard let data = jsonStr.data(using: .utf8),
-              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
-
-        snippets = entries.map { entry in
-            SnippetItem(
-                id: entry["id"] as? String ?? UUID().uuidString,
-                name: entry["name"] as? String ?? "",
-                keyword: entry["keyword"] as? String ?? "",
-                expansion: entry["expansion"] as? String ?? ""
-            )
-        }
-        snippetsLoaded = true
-        snippetSelectedIndex = 0
-    }
-
-    func saveSnippets() {
-        // Never write over a file we could not read.
-        guard snippetsLoaded else { return }
-        let jsonArray: [[String: Any]] = snippets.map { s in
-            ["id": s.id, "name": s.name, "keyword": s.keyword, "expansion": s.expansion]
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: jsonArray),
-              let jsonStr = String(data: data, encoding: .utf8) else { return }
-        let _ = rc_snippets_save(jsonStr)
-        onSnippetsChanged?()
-    }
-
-    var filteredSnippets: [SnippetItem] {
-        if snippetFilter.isEmpty { return snippets }
-        let q = snippetFilter.lowercased()
-        return snippets.filter {
-            $0.name.lowercased().contains(q) || $0.keyword.lowercased().contains(q)
-        }
-    }
-
-    func addSnippet() {
-        editingSnippet = .new()
-        isEditingSnippet = true
-    }
-
-    func editSelectedSnippet() {
-        let items = filteredSnippets
-        guard snippetSelectedIndex < items.count else { return }
-        editingSnippet = items[snippetSelectedIndex]
-        isEditingSnippet = true
-    }
-
-    func saveEditingSnippet() {
-        guard let editing = editingSnippet else { return }
-        if let idx = snippets.firstIndex(where: { $0.id == editing.id }) {
-            snippets[idx] = editing
-        } else {
-            snippets.append(editing)
-        }
-        saveSnippets()
-        isEditingSnippet = false
-        editingSnippet = nil
-        focusFilterField()
-    }
-
-    func cancelEditingSnippet() {
-        isEditingSnippet = false
-        editingSnippet = nil
-        focusFilterField()
-    }
-
-    func deleteSnippet(id: String) {
-        snippets.removeAll { $0.id == id }
-        saveSnippets()
-        if snippetSelectedIndex >= filteredSnippets.count {
-            snippetSelectedIndex = max(0, filteredSnippets.count - 1)
-        }
-    }
-
-    func expandSelectedSnippet() {
-        let items = filteredSnippets
-        guard snippetSelectedIndex < items.count else { return }
-        expandAndPasteSnippet(items[snippetSelectedIndex].expansion)
-    }
-
-    /// Expand a snippet's placeholders, put the result on the pasteboard,
-    /// and paste it into the frontmost app.
-    func expandAndPasteSnippet(_ expansion: String) {
-        let clipboardText = PasteboardAccess.withPasteboard { pasteboard in
-            pasteboard.string(forType: .string)
-        }
-        guard let cStr = rc_snippet_expand(expansion, clipboardText) else { return }
-        let expanded = String(cString: cStr)
-        rc_free_string(cStr)
-        PasteboardAccess.withPasteboard { pasteboard in
-            pasteboard.clearContents()
-            pasteboard.setString(expanded, forType: .string)
-        }
-        onPasteAndHide?()
     }
 
     // MARK: - AI Commands
@@ -1581,15 +1403,6 @@ final class SearchViewModel: ObservableObject {
 
         if homeItems.fileSearch {
             results.append(fileSearchCommandResult(score: 0))
-        }
-
-        if homeItems.snippets {
-            results.append(SearchResult(
-                title: "Snippets",
-                subtitle: "Command",
-                icon: nil,
-                systemIcon: "text.quote"
-            ) { [weak self] in self?.goToSnippets() })
         }
 
         // AI surfaces — hidden entirely when the AI master switch is off.

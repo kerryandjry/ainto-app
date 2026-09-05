@@ -12,7 +12,6 @@ final class HomeItemConfigurationTests: XCTestCase {
             HomeItemConfiguration(config: [
                 "home_clipboard_history": false,
                 "home_file_search": false,
-                "home_snippets": false,
                 "home_ai_commands": false,
             ])
         )
@@ -23,7 +22,6 @@ final class HomeItemConfigurationTests: XCTestCase {
 
         XCTAssertTrue(configuration.clipboardHistory)
         XCTAssertTrue(configuration.fileSearch)
-        XCTAssertTrue(configuration.snippets)
         XCTAssertTrue(configuration.aiCommands)
     }
 }

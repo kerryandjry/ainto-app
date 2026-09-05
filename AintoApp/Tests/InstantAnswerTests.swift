@@ -87,15 +87,12 @@ final class InstantAnswerTests: XCTestCase {
     }
 
     func testSearchViewModelPromotesInstantAnswerAboveNormalResults() async {
-        let pasteboard = NSPasteboard.general
-        let previousClipboard = pasteboard.string(forType: .string)
-        defer {
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let viewModel = SearchViewModel(cleanStaleAttachments: false) { value in
             pasteboard.clearContents()
-            if let previousClipboard {
-                pasteboard.setString(previousClipboard, forType: .string)
-            }
+            pasteboard.setString(value, forType: .string)
         }
-        let viewModel = SearchViewModel()
         viewModel.query = "200 + 10%"
         viewModel.performSearch(query: viewModel.query)
         try? await Task.sleep(nanoseconds: 100_000_000)

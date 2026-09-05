@@ -14,7 +14,6 @@ pub struct Config {
     pub clipboard_max_items: usize,
     pub clipboard_max_image_items: usize,
     pub claude_binary: String,
-    pub snippets_enabled: bool,
     /// Master switch for all AI-related features in the UI.
     /// When false, the launcher hides every AI surface.
     pub ai_enabled: bool,
@@ -27,7 +26,6 @@ pub struct Config {
     /// Items shown on the launcher home page when the query is empty.
     pub home_clipboard_history: bool,
     pub home_file_search: bool,
-    pub home_snippets: bool,
     pub home_ai_commands: bool,
     /// Stable AI Command UUIDs selected for Home. None preserves legacy top-four behavior.
     pub home_ai_command_ids: Option<Vec<String>>,
@@ -43,7 +41,6 @@ impl Default for Config {
             clipboard_max_items: 200,
             clipboard_max_image_items: 50,
             claude_binary: "claude".to_string(),
-            snippets_enabled: true,
             ai_enabled: true,
             file_search_paths: dirs::home_dir()
                 .map(|path| vec![path.to_string_lossy().into_owned()])
@@ -52,7 +49,6 @@ impl Default for Config {
             file_search_include_hidden: false,
             home_clipboard_history: true,
             home_file_search: true,
-            home_snippets: true,
             home_ai_commands: true,
             home_ai_command_ids: None,
             pop_to_root_seconds: 90,
@@ -96,7 +92,7 @@ impl Config {
 /// from the number alone — and whose two sentinel values are not discoverable
 /// at all without being told.
 const POP_TO_ROOT_COMMENT: &str = "\
-# How long the launcher may stay on a sub-page — clipboard, snippets, AI
+# How long the launcher may stay on a sub-page — clipboard, AI
 # commands, Claude — after being hidden. Reopening after longer than this
 # returns to the search page and clears the query; reopening sooner picks up
 # where you left off.
@@ -145,7 +141,6 @@ ai_enabled = true
         );
         assert!(config.home_clipboard_history);
         assert!(config.home_file_search);
-        assert!(config.home_snippets);
         assert!(config.home_ai_commands);
         assert!(config.home_ai_command_ids.is_none());
         // Existing installs have no `pop_to_root_seconds`; they must land on the
@@ -158,7 +153,6 @@ ai_enabled = true
         let config = Config {
             home_clipboard_history: false,
             home_file_search: true,
-            home_snippets: false,
             home_ai_commands: true,
             home_ai_command_ids: Some(vec!["command-one".into(), "command-two".into()]),
             ..Config::default()
@@ -192,7 +186,10 @@ ai_enabled = true
         let key = written.find("pop_to_root_seconds =").unwrap();
         assert!(comment < key);
         // And it must not stop the file being readable.
-        assert_eq!(toml::from_str::<Config>(&written).unwrap(), Config::default());
+        assert_eq!(
+            toml::from_str::<Config>(&written).unwrap(),
+            Config::default()
+        );
     }
 
     #[test]

@@ -3,7 +3,6 @@ import SwiftUI
 struct HomeItemsSettingsView: View {
     @Binding var clipboardHistory: Bool
     @Binding var fileSearch: Bool
-    @Binding var snippets: Bool
     @Binding var aiCommands: Bool
     @Binding var selectedAICommandIDs: [String]
     let aiEnabled: Bool
@@ -38,7 +37,6 @@ struct HomeItemsSettingsView: View {
                     Divider().opacity(0.25)
                     homeToggle("File Search", icon: "doc.text.magnifyingglass", isOn: $fileSearch)
                     Divider().opacity(0.25)
-                    homeToggle("Snippets", icon: "text.quote", isOn: $snippets)
                     Divider().opacity(0.25)
 
                     HStack(spacing: 10) {

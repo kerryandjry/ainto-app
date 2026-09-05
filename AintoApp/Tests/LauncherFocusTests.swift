@@ -19,7 +19,7 @@ final class LauncherFocusTests: XCTestCase {
 
     func testRapidReopenFocusesMainSearchField() async throws {
         _ = NSApplication.shared
-        let panel = SearchPanel()
+        let panel = SearchPanel(viewModel: SearchViewModel(cleanStaleAttachments: false))
         defer { panel.hidePanel() }
 
         panel.showPanel()
@@ -32,7 +32,7 @@ final class LauncherFocusTests: XCTestCase {
 
     func testStaleMainRequestCannotStealFocusFromClaudePage() async throws {
         _ = NSApplication.shared
-        let panel = SearchPanel()
+        let panel = SearchPanel(viewModel: SearchViewModel(cleanStaleAttachments: false))
         defer { panel.hidePanel() }
 
         panel.showPanel()
@@ -44,7 +44,7 @@ final class LauncherFocusTests: XCTestCase {
 
     func testHidingInvalidatesPendingFocusCompletion() async throws {
         _ = NSApplication.shared
-        let panel = SearchPanel()
+        let panel = SearchPanel(viewModel: SearchViewModel(cleanStaleAttachments: false))
         var completed = false
 
         panel.showPanel()

@@ -8,7 +8,7 @@ import SwiftUI
 @MainActor
 final class SearchPanel: NSPanel {
     private let hostingView: NSHostingView<MainView>
-    let viewModel = SearchViewModel()
+    let viewModel: SearchViewModel
 
     /// The app that was frontmost before we showed the panel.
     private var previousApp: NSRunningApplication?
@@ -30,7 +30,8 @@ final class SearchPanel: NSPanel {
     private var actionWindow: NSWindow?
     private var actionSelectedIndex = 0
 
-    init() {
+    init(viewModel: SearchViewModel = SearchViewModel()) {
+        self.viewModel = viewModel
         let mainView = MainView(viewModel: viewModel)
         hostingView = NSHostingView(rootView: mainView)
         // Default sizingOptions (.standardBounds) for correct auto-sizing.
@@ -124,9 +125,8 @@ final class SearchPanel: NSPanel {
         // Pick up any Settings change to the AI master switch.
         viewModel.loadAISettings()
 
-        // Refresh the in-memory snippet/AI-command lists that search reads from,
+        // Refresh the in-memory AI-command list that search reads from,
         // so typing never has to hit disk.
-        viewModel.loadSnippets()
         viewModel.loadAICommands()
 
         // Must follow loadAISettings, which refreshes the configured delay.
@@ -284,8 +284,6 @@ final class SearchPanel: NSPanel {
             viewModel.searchMode == .claude ? "Ask Claude anything..." : "Search..."
         case .clipboard:
             "Type to filter entries..."
-        case .snippets:
-            viewModel.isEditingSnippet ? "Snippet name" : "Filter snippets..."
         case .aiCommands:
             viewModel.isEditingAICommand ? "Command name" : "Filter commands..."
         case .fileSearch:
@@ -358,7 +356,7 @@ final class SearchPanel: NSPanel {
             return
         }
         // Navigation and confirmation targets change the page and remain visible.
-        // Immediate targets (apps, snippets, and safe system actions) close the panel.
+        // Immediate targets (apps and safe system actions) close the panel.
         if viewModel.page == .main {
             hidePanel()
         }
@@ -644,12 +642,8 @@ final class SearchPanel: NSPanel {
                 }
             }
 
-            // Cmd+Enter — save snippet/AI command form
+            // Cmd+Enter — save AI command form
             if hasCmd && keyCode == 36 {
-                if self.viewModel.isEditingSnippet {
-                    self.viewModel.saveEditingSnippet()
-                    return nil
-                }
                 if self.viewModel.isEditingAICommand {
                     self.viewModel.saveEditingAICommand()
                     return nil
@@ -679,12 +673,8 @@ final class SearchPanel: NSPanel {
                 return nil
             }
 
-            // Cmd+N — new snippet/AI command
+            // Cmd+N — new AI command
             if hasCmd && keyCode == 45 { // N key
-                if self.viewModel.page == .snippets && !self.viewModel.isEditingSnippet {
-                    self.viewModel.addSnippet()
-                    return nil
-                }
                 if self.viewModel.page == .aiCommands && !self.viewModel.isEditingAICommand {
                     self.viewModel.addAICommand()
                     return nil
@@ -693,13 +683,6 @@ final class SearchPanel: NSPanel {
 
             // Cmd+D or Cmd+Backspace — delete selected item
             if hasCmd && (keyCode == 2 || keyCode == 51) { // D key or Backspace
-                if self.viewModel.page == .snippets && !self.viewModel.isEditingSnippet {
-                    let items = self.viewModel.filteredSnippets
-                    if self.viewModel.snippetSelectedIndex < items.count {
-                        self.viewModel.deleteSnippet(id: items[self.viewModel.snippetSelectedIndex].id)
-                    }
-                    return nil
-                }
                 if self.viewModel.page == .aiCommands && !self.viewModel.isEditingAICommand {
                     let items = self.viewModel.filteredAICommands
                     if self.viewModel.aiCommandSelectedIndex < items.count {
@@ -716,12 +699,8 @@ final class SearchPanel: NSPanel {
                 }
             }
 
-            // Cmd+E — edit selected snippet/AI command
+            // Cmd+E — edit selected AI command
             if hasCmd && keyCode == 14 { // E key
-                if self.viewModel.page == .snippets && !self.viewModel.isEditingSnippet {
-                    self.viewModel.editSelectedSnippet()
-                    return nil
-                }
                 if self.viewModel.page == .aiCommands && !self.viewModel.isEditingAICommand {
                     self.viewModel.editSelectedAICommand()
                     return nil
@@ -743,9 +722,6 @@ final class SearchPanel: NSPanel {
             }
 
             switch keyCode {
-            case 53 where self.viewModel.isEditingSnippet: // Escape in snippet edit — cancel
-                self.viewModel.cancelEditingSnippet()
-                return nil
             case 53 where self.viewModel.isEditingAICommand: // Escape in AI command edit — cancel
                 self.viewModel.cancelEditingAICommand()
                 return nil

@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class LauncherNavigationTests: XCTestCase {
     func testPendingSystemActionDoesNotSurviveHidingThePanel() {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.page = .systemConfirmation
         viewModel.pendingSystemAction = .restart
 
@@ -21,7 +21,7 @@ final class LauncherNavigationTests: XCTestCase {
     }
 
     func testConfirmationSurvivesWhileTheActionIsExecuting() {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.page = .systemConfirmation
         viewModel.pendingSystemAction = .restart
         viewModel.isExecutingSystemAction = true
@@ -33,7 +33,7 @@ final class LauncherNavigationTests: XCTestCase {
     }
 
     func testUnaffectedPagesAreLeftAlone() {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.page = .clipboard
 
         viewModel.prepareForPanelHide()
@@ -112,7 +112,7 @@ final class LauncherNavigationTests: XCTestCase {
     }
 
     func testZeroDelayPopsImmediately() {
-        let viewModel = makeViewModel(page: .snippets, delay: 0)
+        let viewModel = makeViewModel(page: .aiCommands, delay: 0)
 
         XCTAssertTrue(viewModel.popToRootIfStale(hiddenFor: 0))
         XCTAssertEqual(viewModel.page, .main)
@@ -125,12 +125,7 @@ final class LauncherNavigationTests: XCTestCase {
         XCTAssertEqual(viewModel.page, .clipboard)
     }
 
-    func testSnippetAndAICommandEditorsSurviveStalePanel() {
-        let snippetViewModel = makeViewModel(page: .snippets)
-        snippetViewModel.isEditingSnippet = true
-        XCTAssertFalse(snippetViewModel.popToRootIfStale(hiddenFor: 91))
-        XCTAssertEqual(snippetViewModel.page, .snippets)
-
+    func testAICommandEditorSurvivesStalePanel() {
         let commandViewModel = makeViewModel(page: .aiCommands)
         commandViewModel.isEditingAICommand = true
         XCTAssertFalse(commandViewModel.popToRootIfStale(hiddenFor: 91))
@@ -158,7 +153,7 @@ final class LauncherNavigationTests: XCTestCase {
         page: LauncherPage,
         delay: Int = 90
     ) -> SearchViewModel {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.page = page
         viewModel.popToRootSeconds = delay
         return viewModel

@@ -109,21 +109,6 @@ int32_t rc_clipboard_delete(int64_t id);
 int32_t rc_clipboard_clear(void);
 
 // ============================================================
-// Snippets
-// ============================================================
-
-/// Load snippets, returns JSON array string.
-/// Returns NULL if the file exists but could not be read/parsed.
-const char* rc_snippets_load(void);
-
-/// Save snippets from JSON array string
-int32_t rc_snippets_save(const char* json);
-
-/// Expand a snippet's text with placeholders resolved
-/// clipboard_text can be NULL
-const char* rc_snippet_expand(const char* expansion_text, const char* clipboard_text);
-
-// ============================================================
 // Global Aliases
 // ============================================================
 

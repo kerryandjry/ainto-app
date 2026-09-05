@@ -13,8 +13,6 @@ struct MainView: View {
                 mainSearchView
             case .clipboard:
                 ClipboardView(viewModel: viewModel)
-            case .snippets:
-                SnippetView(viewModel: viewModel)
             case .aiCommands:
                 AICommandView(viewModel: viewModel)
             case .fileSearch:

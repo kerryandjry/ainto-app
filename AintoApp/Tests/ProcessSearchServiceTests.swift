@@ -110,7 +110,7 @@ final class ProcessSearchServiceTests: XCTestCase {
 @MainActor
 final class ProcessSearchRoutingTests: XCTestCase {
     func testAliasNamedKillStillResolvesNormally() {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.aliases = [
             LauncherAlias(
                 alias: "kill",
@@ -125,7 +125,7 @@ final class ProcessSearchRoutingTests: XCTestCase {
     }
 
     func testStaleCandidateCannotArmAfterQueryChanges() {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         let candidate = processCandidate()
         viewModel.query = "ordinary search"
         viewModel.processCandidates = [candidate]
@@ -137,7 +137,7 @@ final class ProcessSearchRoutingTests: XCTestCase {
     }
 
     func testHidingPanelCancelsArmedConfirmationAndSearchGeneration() throws {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         let candidate = processCandidate()
         viewModel.query = "kill test-child"
         viewModel.processCandidates = [candidate]
@@ -156,7 +156,7 @@ final class ProcessSearchRoutingTests: XCTestCase {
     }
 
     func testConfirmationTokenExpiryDisarmsCandidate() throws {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         let candidate = processCandidate()
         viewModel.query = "kill test-child"
         viewModel.processCandidates = [candidate]

@@ -8,7 +8,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::Mutex;
 
-use crate::{aliases, calculator, clipboard_store, config, discovery, search, snippets};
+use crate::{aliases, calculator, clipboard_store, config, discovery, search};
 
 // ============================================================
 // Global State
@@ -294,7 +294,9 @@ pub extern "C" fn rc_get_ranking(key: *const c_char) -> i32 {
 /// Clear persisted usage rankings together with in-memory ranking values.
 #[unsafe(no_mangle)]
 pub extern "C" fn rc_reset_rankings() -> i32 {
-    let Ok(cfg_dir) = config::config_dir() else { return -1 };
+    let Ok(cfg_dir) = config::config_dir() else {
+        return -1;
+    };
     let path = cfg_dir.join("ranking.toml");
     if crate::ranking::reset(&path).is_err() {
         return -1;
@@ -554,7 +556,11 @@ pub extern "C" fn rc_clipboard_get_recent_paged(
     let entries = guard
         .as_ref()
         .and_then(|opt| opt.as_ref())
-        .and_then(|store| store.get_recent_paged(limit as usize, offset as usize, filter).ok())
+        .and_then(|store| {
+            store
+                .get_recent_paged(limit as usize, offset as usize, filter)
+                .ok()
+        })
         .unwrap_or_default();
 
     let json_entries: Vec<serde_json::Value> = entries.iter().map(entry_to_json).collect();
@@ -583,7 +589,11 @@ pub extern "C" fn rc_clipboard_search_paged(
     let entries = guard
         .as_ref()
         .and_then(|opt| opt.as_ref())
-        .and_then(|store| store.search_paged(&q, limit as usize, offset as usize, filter).ok())
+        .and_then(|store| {
+            store
+                .search_paged(&q, limit as usize, offset as usize, filter)
+                .ok()
+        })
         .unwrap_or_default();
 
     let json_entries: Vec<serde_json::Value> = entries.iter().map(entry_to_json).collect();
@@ -617,55 +627,6 @@ pub extern "C" fn rc_clipboard_clear() -> i32 {
         Ok(()) => 0,
         Err(_) => -1,
     }
-}
-
-// ============================================================
-// Snippets
-// ============================================================
-
-/// Returns null when snippets.toml exists but could not be read or parsed.
-/// A missing file is not an error — it yields an empty list.
-#[unsafe(no_mangle)]
-pub extern "C" fn rc_snippets_load() -> *const c_char {
-    let path = config::config_dir()
-        .map(|d| d.join("snippets.toml"))
-        .unwrap_or_default();
-    let Ok(snips) = snippets::load_snippets(&path) else {
-        return ptr::null();
-    };
-    let json = serde_json::to_string(&snips).unwrap_or_else(|_| "[]".to_string());
-    to_c_string(&json)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rc_snippets_save(json: *const c_char) -> i32 {
-    let Some(json_str) = from_c_str(json) else {
-        return -1;
-    };
-    let Ok(snips) = serde_json::from_str::<Vec<snippets::Snippet>>(&json_str) else {
-        return -1;
-    };
-    let path = match config::config_dir() {
-        Ok(d) => d.join("snippets.toml"),
-        Err(_) => return -1,
-    };
-    match snippets::save_snippets(&path, &snips) {
-        Ok(()) => 0,
-        Err(_) => -1,
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn rc_snippet_expand(
-    expansion_text: *const c_char,
-    clipboard_text: *const c_char,
-) -> *const c_char {
-    let Some(text) = from_c_str(expansion_text) else {
-        return ptr::null();
-    };
-    let clip = from_c_str(clipboard_text);
-    let result = snippets::resolve_placeholders(&text, clip.as_deref());
-    to_c_string(&result)
 }
 
 // ============================================================

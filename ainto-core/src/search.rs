@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn frecency_reorders_only_within_match_tier() {
         let lower = fuzzy_score("set", "translate to english", "Translate to English");
-        let higher = fuzzy_score("set", "snippets", "Snippets");
+        let higher = fuzzy_score("set", "select", "Select");
         assert!(lower < 100);
         assert!(higher < 100);
         assert!(ranked_fuzzy_score(lower, 100) >= ranked_fuzzy_score(higher, 0));

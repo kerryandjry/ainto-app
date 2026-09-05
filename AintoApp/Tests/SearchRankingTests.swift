@@ -14,7 +14,7 @@ final class SearchRankingTests: XCTestCase {
     }
 
     func testFrecencyCanReorderResultsWithinSubsequenceTier() {
-        let unused = rankedFuzzyScore("set", "Snippets", ranking: 0)
+        let unused = rankedFuzzyScore("set", "Select", ranking: 0)
         let frequent = rankedFuzzyScore("set", "Translate to English", ranking: 100)
 
         XCTAssertGreaterThanOrEqual(frequent, unused)

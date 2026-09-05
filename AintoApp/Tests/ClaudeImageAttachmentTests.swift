@@ -145,7 +145,7 @@ final class ClaudeImageAttachmentTests: XCTestCase {
     }
 
     func testPendingImportBlocksSendingAndSecondImport() {
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.searchMode = .claude
         viewModel.query = "Do not send yet"
 
@@ -162,7 +162,7 @@ final class ClaudeImageAttachmentTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try onePixelPNG.write(to: url)
         let attachment = ClaudeImageAttachment(url: url, displayName: "image.png")
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.page = .claude
         viewModel.claudeMessages = [
             ClaudeMessage(role: .user, text: "Inspect this", attachments: [attachment]),
@@ -178,7 +178,7 @@ final class ClaudeImageAttachmentTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try onePixelPNG.write(to: url)
         let attachment = ClaudeImageAttachment(url: url, displayName: "image.png")
-        let viewModel = SearchViewModel()
+        let viewModel = SearchViewModel(cleanStaleAttachments: false)
         viewModel.searchMode = .claude
         viewModel.claudePendingAttachments = [attachment]
 

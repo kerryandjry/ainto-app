@@ -15,7 +15,7 @@ extension SearchViewModel {
     func resolvedAliasResult(for query: String) -> SearchResult? {
         let normalized = AliasStore.normalize(query)
         guard !normalized.isEmpty,
-              let entry = aliases.first(where: { AliasStore.normalize($0.alias) == normalized }),
+              let entry = aliases.first(where: { $0.isActive && AliasStore.normalize($0.alias) == normalized }),
               var result = result(for: entry.target)
         else { return nil }
         result.subtitle = "Alias: \(entry.alias) • \(result.subtitle)"
@@ -51,7 +51,7 @@ extension SearchViewModel {
             result.keepsPanelOpenAfterAction = true
             return result
         case .snippet:
-            return snippetResult(targetID: target.id)
+            return nil // Legacy target retained only for lossless alias migration.
         case .launcherCommand:
             switch target.id {
             case "file-search":
@@ -103,25 +103,5 @@ extension SearchViewModel {
         return result
     }
 
-    private func snippetResult(targetID: String) -> SearchResult? {
-        guard let cString = rc_snippets_load() else { return nil }
-        defer { rc_free_string(cString) }
-        let json = String(cString: cString)
-        guard let data = json.data(using: .utf8),
-              let entries = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-              let snippet = entries.first(where: { $0["id"] as? String == targetID })
-        else { return nil }
-        let name = snippet["name"] as? String ?? ""
-        let keyword = snippet["keyword"] as? String ?? ""
-        let expansion = snippet["expansion"] as? String ?? ""
-        return SearchResult(
-            title: name,
-            subtitle: "Snippet: \(keyword)",
-            icon: nil,
-            systemIcon: "doc.text.fill",
-            targetRef: LauncherTargetRef(kind: .snippet, id: targetID)
-        ) { [weak self] in
-            self?.expandAndPasteSnippet(expansion)
-        }
-    }
+
 }

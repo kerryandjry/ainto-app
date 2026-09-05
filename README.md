@@ -46,7 +46,6 @@
 | **Process Search** | Type `kill <name-or-pid>` to find an owned process and explicitly confirm `SIGKILL` |
 | **AI** | Press Tab to chat, or select text → run & replace (Fix Grammar, Translate, Summarize, or your own) |
 | **Clipboard History** | Persistent history with text, image, and file support |
-| **Snippets** | Search, preview, and paste templates, or enable global expansion with dynamic placeholders (`{date}`, `{clipboard}`, `{time}`, `{uuid}`) |
 | **Native Launcher UI** | Keyboard-first navigation, cursor-display positioning, and stable top-left panel geometry |
 
 > **AI & billing:** Ainto runs the Claude Code CLI on your Mac (`claude -p`), so AI usage is billed to your own Claude account — Ainto stores no API key and never charges you. See [how Claude meters Agent SDK / `claude -p` usage](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan).
@@ -56,15 +55,14 @@
 - File Search uses Spotlight metadata; Ainto never recursively crawls your disk.
 - Full Disk Access controls permission and does not silently expand the configured search scope.
 - Process termination is opt-in: only `kill` followed by a space activates Process Search; exact `kill` remains ordinary search. Return arms a candidate, and `⌘↵` confirms. Ainto revalidates PID, owner, executable path, and start time immediately before signalling and excludes protected system processes.
-- Clipboard and snippet data stay under `~/.config/ainto/`. Clipboard representations are preserved when Ainto temporarily pastes generated text.
+- Clipboard data stay under `~/.config/ainto/`. Clipboard representations are preserved when Ainto temporarily pastes generated text.
 - There is no telemetry, Electron runtime, WebView, or bundled AI inference service.
 
 ### Permissions
 
 Some optional features need macOS privacy permissions:
 
-- **Accessibility:** selected-text capture/replacement and global snippet expansion.
-- **Input Monitoring:** global snippet expansion.
+- **Accessibility:** selected-text capture/replacement.
 - **Full Disk Access:** only when you want Spotlight results from protected locations.
 
 App Search, launcher navigation, calculator answers, and other local features do not require Full Disk Access.
@@ -76,25 +74,21 @@ Ainto is a native macOS app: an AppKit + SwiftUI front end over a Rust core, bri
 ```mermaid
 flowchart TD
     User([User]) -->|global hotkey| HK["Global hotkey (Carbon)"]
-    User -->|snippet keyword| Tap["CGEvent tap"]
 
     subgraph FE["Front end — AppKit + SwiftUI"]
         HK --> Panel["Non-activating NSPanel"]
-        Panel --> Views["Apps / Files / Clipboard / Snippets / AI views"]
+        Panel --> Views["Apps / Files / Clipboard / AI views"]
         Views --> Table["NSTableView (cell reuse)"]
         Views --> File["Spotlight file search"]
-        Tap --> Expand["Inline snippet expansion"]
     end
 
     Views <-->|"C ABI / FFI"| Core
-    Expand -->|reads snippets| Snip
 
     subgraph Core["Rust core — static library"]
         Disc["App discovery"]
         Search["Fuzzy search"]
         Rank["Frecency ranking"]
         Clip["Clipboard store"]
-        Snip["Snippets"]
         AICmd["AI commands"]
         Calc["Calculator"]
     end
@@ -102,18 +96,17 @@ flowchart TD
     Disc -->|Launch Services| OS["macOS"]
     Clip --> DB[("SQLite — clipboard.db")]
     Clip --> Img[["Images on disk"]]
-    Snip --> Cfg[("TOML config")]
-    Rank --> Cfg
+    Rank --> Cfg[("TOML config")]
     AICmd --> CC["Claude Code (CLI)"]
     File --> Spot["Spotlight metadata"]
 ```
 
-- **Rust core.** App discovery, fuzzy search, frecency ranking, the clipboard store, snippet expansion, and AI commands all live in a single Rust static library linked into the app.
+- **Rust core.** App discovery, fuzzy search, frecency ranking, the clipboard store, and AI commands all live in a single Rust static library linked into the app.
 - **App and file discovery.** Apps are enumerated through Launch Services and ranked with a frecency model. File Search queries Spotlight on demand rather than maintaining another index.
 - **Clipboard store.** Backed by SQLite. Images are written to disk and referenced by path rather than stored in the database, and every entry is deduplicated with an XXH3 content hash. Text and images keep independent retention limits, so heavy text copying never evicts your image history.
 - **Clipboard list.** An `NSTableView` with cell reuse, fed by paginated and debounced SQLite queries — the list scrolls and searches smoothly however large the history grows.
-- **Input.** A non-activating `NSPanel` that preserves the foreground app. The launcher and optional target shortcuts use registered system hotkeys, while optional inline snippet expansion uses a `CGEvent` tap.
-- **Local-first.** Everything lives under `~/.config/ainto/` — SQLite for clipboard history, TOML for config, snippets, AI commands, and rankings. No telemetry.
+- **Input.** A non-activating `NSPanel` that preserves the foreground app. The launcher and optional target shortcuts use registered system hotkeys.
+- **Local-first.** Everything lives under `~/.config/ainto/` — SQLite for clipboard history, TOML for config, AI commands, and rankings. No telemetry.
 - **Updates.** Builds are signed, notarized, and delivered over [Sparkle](https://sparkle-project.org/).
 
 ## Build

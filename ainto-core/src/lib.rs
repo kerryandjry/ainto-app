@@ -12,7 +12,6 @@ pub mod discovery;
 pub mod ffi;
 pub mod ranking;
 pub mod search;
-pub mod snippets;
 
 /// Unified error type for ainto-core.
 #[derive(Debug, thiserror::Error)]

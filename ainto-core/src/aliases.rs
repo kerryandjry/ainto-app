@@ -38,6 +38,10 @@ pub fn validate_aliases(aliases: &[AliasEntry]) -> Result<(), String> {
     let mut seen_aliases = HashSet::new();
     let mut seen_hotkeys = HashSet::new();
     for entry in aliases {
+        // Preserve retired targets on disk without reserving aliases or shortcuts.
+        if entry.target_type == "snippet" {
+            continue;
+        }
         let normalized = normalize_alias(&entry.alias);
         let hotkey = entry
             .hotkey_key_code
@@ -111,6 +115,25 @@ mod tests {
             target_type: "system_action".into(),
             target_id: "sleep".into(),
         }
+    }
+
+    #[test]
+    fn retired_snippet_aliases_round_trip_without_reserving_bindings() {
+        let path = std::env::temp_dir().join(format!("ainto-retired-{}.toml", uuid::Uuid::new_v4()));
+        let mut retired = entry("files");
+        retired.target_type = "snippet".into();
+        retired.hotkey_key_code = Some(8);
+        retired.hotkey_modifiers = Some(2048);
+        retired.hotkey_display = Some("Option C".into());
+        let mut active = retired.clone();
+        active.target_type = "system_action".into();
+        save_aliases(&path, &[retired, active]).unwrap();
+        let loaded = load_aliases(&path).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].target_type, "snippet");
+        assert_eq!(loaded[0].hotkey_key_code, Some(8));
+        assert!(validate_aliases(&loaded).is_ok());
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

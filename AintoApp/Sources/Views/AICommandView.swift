@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// AI Commands management sub-page — mirrors SnippetView layout.
+/// AI Commands management sub-page — list and editor.
 struct AICommandView: View {
     @ObservedObject var viewModel: SearchViewModel
     @FocusState private var isFilterFocused: Bool

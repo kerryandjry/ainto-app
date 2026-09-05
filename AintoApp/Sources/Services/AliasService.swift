@@ -8,7 +8,7 @@ extension Notification.Name {
 enum LauncherTargetKind: String, Codable, CaseIterable {
     case app
     case aiCommand = "ai_command"
-    case snippet
+    case snippet // Decode-only compatibility for retired targets.
     case launcherCommand = "launcher_command"
     case systemAction = "system_action"
 }
@@ -58,6 +58,7 @@ struct LauncherAlias: Codable, Identifiable, Hashable {
         return "\(AliasStore.normalize(alias))|\(shortcut)|\(targetType.rawValue):\(targetID)"
     }
     var target: LauncherTargetRef { LauncherTargetRef(kind: targetType, id: targetID) }
+    var isActive: Bool { targetType != .snippet }
 
     enum CodingKeys: String, CodingKey {
         case alias
@@ -163,7 +164,7 @@ enum AliasStore {
     static func validate(_ aliases: [LauncherAlias]) -> String? {
         var usedAliases = Set<String>()
         var usedHotkeys = Set<String>()
-        for entry in aliases {
+        for entry in aliases where entry.isActive {
             let normalized = normalize(entry.alias)
             if normalized.isEmpty && entry.hotkey == nil {
                 return "Enter an alias, record a shortcut, or provide both."

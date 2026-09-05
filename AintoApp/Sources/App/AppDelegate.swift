@@ -13,7 +13,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var hotkeyManager: HotkeyManager?
     private var aliasHotkeyManager: AliasHotkeyManager?
     private var clipboardMonitor: ClipboardMonitor?
-    private var textExpander: TextExpander?
     private var trayManager: TrayManager?
     private var settingsWindow: NSWindow?
     /// Live config-file watchers, keyed by file name.
@@ -54,10 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Set up search panel
         searchPanel = SearchPanel()
-        searchPanel?.viewModel.onSnippetsChanged = { [weak self] in
-            self?.textExpander?.reloadSnippets()
-        }
-
         // Set up global hotkey
         hotkeyManager = HotkeyManager { [weak self] in
             self?.toggleSearchPanel()
@@ -77,9 +72,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         clipboardMonitor?.startMonitoring()
 
-        // Start global text expansion (only while enabled in config)
-        textExpander = TextExpander()
-        applySnippetsEnabled()
 
         // Set up tray icon
         trayManager = TrayManager(hotkeyManager: hotkeyManager, onSettings: { [weak self] in
@@ -116,7 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private static let watchedConfigFiles = [
-        "snippets.toml", "ai-commands.toml", "aliases.toml", "config.toml",
+        "ai-commands.toml", "aliases.toml", "config.toml",
     ]
 
     private var configDirectory: String { NSHomeDirectory() + "/.config/ainto" }
@@ -168,7 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// by writing a temp file and renaming it over the original, which swaps the
     /// inode out — so after a rename or delete the old watcher is live but deaf,
     /// and the path has to be re-opened. The same retry covers a file that does
-    /// not exist yet at launch (snippets.toml is only created on first save).
+    /// not exist yet at launch (aliases.toml is only created on first save).
     private func watchConfigFile(named name: String, reloadAfterOpening: Bool) {
         guard configWatchers[name] == nil else { return }
         let fileDescriptor = open(configDirectory + "/" + name, O_EVTONLY)
@@ -206,15 +198,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if name == "config.toml" {
             // Covers both the Settings toggle (saved via rc_config_save)
             // and manual TOML edits.
-            applySnippetsEnabled()
             searchPanel?.viewModel.reloadLauncherConfiguration()
         } else if name == "aliases.toml" {
             searchPanel?.viewModel.reloadAliases()
             aliasHotkeyManager?.reload()
         } else {
-            searchPanel?.viewModel.loadSnippets()
             searchPanel?.viewModel.loadAICommands()
-            textExpander?.reloadSnippets()
         }
     }
 
@@ -280,7 +269,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         clipboardMonitor?.stopMonitoring()
-        textExpander?.stop()
         configWatchers.values.forEach { $0.cancel() }
         configWatchers.removeAll()
         configDirectoryWatcher?.cancel()
@@ -365,27 +353,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Discover apps (without icons — Swift loads icons via NSWorkspace)
         let _ = rc_discover_apps(false)
-    }
-
-    /// Start or stop the keystroke event tap to match `snippets_enabled` in
-    /// config.toml. Disabling snippets must actually tear down the CGEvent
-    /// tap — users expect no keystroke monitoring while the switch is off.
-    private func applySnippetsEnabled() {
-        if loadSnippetsEnabled() {
-            textExpander?.start()
-        } else {
-            textExpander?.stop()
-        }
-    }
-
-    private func loadSnippetsEnabled() -> Bool {
-        guard let cstr = rc_config_load() else { return true }
-        defer { rc_free_string(cstr) }
-        let json = String(cString: cstr)
-        guard let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return true }
-        return dict["snippets_enabled"] as? Bool ?? true
     }
 
     private func loadClipboardLimits() -> (text: Int, image: Int) {
