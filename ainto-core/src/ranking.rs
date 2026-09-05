@@ -71,8 +71,12 @@ pub fn load_rankings(path: &Path) -> HashMap<String, RankingEntry> {
         .ok()
         .and_then(|content| {
             // Try new format first
-            if let Ok(file) = toml::from_str::<RankingFile>(&content) {
-                return Some(file.rankings);
+            if let Ok(value) = toml::from_str::<toml::Value>(&content)
+                && value.get("rankings").is_some_and(toml::Value::is_table)
+            {
+                return toml::from_str::<RankingFile>(&content)
+                    .ok()
+                    .map(|file| file.rankings);
             }
             // Migrate from old format: key = i32
             if let Ok(old) = toml::from_str::<HashMap<String, i32>>(&content) {
@@ -187,22 +191,69 @@ pub fn get_score(path: &Path, key: &str) -> i32 {
 
 /// Persist an app's home-page pin without changing its usage ranking.
 pub fn set_pinned(path: &Path, key: &str, pinned: bool) -> Result<(), Error> {
-    with_cache(path, |rankings| {
-        rankings
-            .entry(key.to_string())
-            .and_modify(|entry| entry.pinned = pinned)
-            .or_insert_with(|| RankingEntry {
-                count: 0,
-                last_used: now(),
-                pinned,
-            });
-        save_rankings(path, rankings)
-    })
+    with_cache(path, |rankings| update_pin(path, rankings, key, pinned))
+}
+
+fn update_pin(
+    path: &Path,
+    rankings: &mut HashMap<String, RankingEntry>,
+    key: &str,
+    pinned: bool,
+) -> Result<(), Error> {
+    let mut updated = rankings.clone();
+    updated
+        .entry(key.to_string())
+        .and_modify(|entry| entry.pinned = pinned)
+        .or_insert_with(|| RankingEntry {
+            count: 0,
+            last_used: now(),
+            pinned,
+        });
+    save_rankings(path, &updated)?;
+    *rankings = updated;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_counts_survive_migration() {
+        let path = std::env::temp_dir().join(format!("ainto-legacy-{}.toml", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            "\"/Applications/A.app\" = 3\n\"/Applications/B.app\" = 7\n",
+        )
+        .unwrap();
+        for _ in 0..2 {
+            let loaded = load_rankings(&path);
+            assert_eq!(loaded.len(), 2);
+            assert_eq!(loaded["/Applications/A.app"].count, 3);
+            assert_eq!(loaded["/Applications/B.app"].count, 7);
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn failed_pin_save_does_not_change_cache() {
+        let path = std::env::temp_dir().join(format!("ainto-pin-fail-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&path).unwrap();
+        for originally_pinned in [false, true] {
+            let mut rankings = HashMap::from([(
+                "app".into(),
+                RankingEntry {
+                    count: 3,
+                    last_used: 123,
+                    pinned: originally_pinned,
+                },
+            )]);
+            assert!(update_pin(&path, &mut rankings, "app", !originally_pinned).is_err());
+            assert_eq!(rankings["app"].pinned, originally_pinned);
+            assert_eq!(rankings["app"].count, 3);
+        }
+        std::fs::remove_dir(path).unwrap();
+    }
 
     #[test]
     fn reset_clears_the_cache_and_removes_the_file() {
