@@ -270,12 +270,11 @@ pub extern "C" fn rc_increment_ranking(key: *const c_char) -> i32 {
     let score = crate::ranking::increment_and_save(&path, &k);
 
     // Also update in-memory AppIndex if it's an app path
-    if !k.starts_with("cmd:") && !k.starts_with("cmd-id:") {
-        if let Ok(mut idx) = APP_INDEX.lock() {
-            if let Some(ref mut index) = *idx {
-                index.update_ranking(&k);
-            }
-        }
+    if !k.starts_with("cmd:") && !k.starts_with("cmd-id:")
+        && let Ok(mut idx) = APP_INDEX.lock()
+        && let Some(ref mut index) = *idx
+    {
+        index.update_ranking(&k);
     }
     score
 }
@@ -303,10 +302,10 @@ pub extern "C" fn rc_reset_rankings() -> i32 {
     }
 
     let rankings = crate::ranking::all_rankings(&path);
-    if let Ok(mut idx) = APP_INDEX.lock() {
-        if let Some(ref mut index) = *idx {
-            index.apply_rankings(&rankings);
-        }
+    if let Ok(mut idx) = APP_INDEX.lock()
+        && let Some(ref mut index) = *idx
+    {
+        index.apply_rankings(&rankings);
     }
     0
 }
@@ -342,12 +341,11 @@ pub extern "C" fn rc_set_app_pinned(app_path: *const c_char, pinned: bool) -> i3
     if crate::ranking::set_pinned(&cfg_dir.join("ranking.toml"), &key, pinned).is_err() {
         return -1;
     }
-    if let Ok(mut index) = APP_INDEX.lock() {
-        if let Some(index) = index.as_mut() {
-            if let Some(app) = index.apps_mut().iter_mut().find(|app| app.path == key) {
-                app.is_favourite = pinned;
-            }
-        }
+    if let Ok(mut index) = APP_INDEX.lock()
+        && let Some(index) = index.as_mut()
+        && let Some(app) = index.apps_mut().iter_mut().find(|app| app.path == key)
+    {
+        app.is_favourite = pinned;
     }
     0
 }
@@ -364,13 +362,13 @@ pub extern "C" fn rc_update_ranking(app_path: *const c_char) {
     let score = crate::ranking::increment_and_save(&path, &key);
 
     // Update in-memory AppIndex
-    if let Ok(mut idx) = APP_INDEX.lock() {
-        if let Some(ref mut index) = *idx {
-            index.update_ranking(&key);
-            // Set the ranking to the frecency score
-            if let Some(app) = index.apps_mut().iter_mut().find(|a| a.path == key) {
-                app.ranking = score;
-            }
+    if let Ok(mut idx) = APP_INDEX.lock()
+        && let Some(ref mut index) = *idx
+    {
+        index.update_ranking(&key);
+        // Set the ranking to the frecency score
+        if let Some(app) = index.apps_mut().iter_mut().find(|a| a.path == key) {
+            app.ranking = score;
         }
     }
 }

@@ -50,14 +50,14 @@ impl AppIndex {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         scored.into_iter().map(|(app, _)| app).collect()
     }
 
     /// Get top-ranked apps (most frequently used).
     pub fn get_top_ranked(&self, limit: usize) -> Vec<&AppEntry> {
         let mut ranked: Vec<&AppEntry> = self.apps.iter().filter(|a| a.ranking > 0).collect();
-        ranked.sort_by(|a, b| b.ranking.cmp(&a.ranking));
+        ranked.sort_by_key(|app| std::cmp::Reverse(app.ranking));
         ranked.truncate(limit);
         ranked
     }

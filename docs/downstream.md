@@ -19,6 +19,15 @@ upstream bundle identity and config namespace are retained, so do not install
 both variants simultaneously. Upstream Sparkle metadata is removed; this build
 requires manual updates until a separately signed downstream feed is established.
 
+## Reproduce CI locally
+
+CI and `rust-toolchain.toml` pin Rust **1.98.1** with Clippy. Update both together
+when intentionally upgrading. Keep `cargo clippy --all-targets -- -D warnings`:
+new Clippy versions can reject code that passed an older local installation.
+With rustup on PATH, the toolchain file selects the version automatically.
+Homebrew's standalone Cargo does not honor it; check `rustc --version` and
+`cargo clippy --version` before treating a local result as equivalent to CI.
+
 ## Snippets removal
 
 Snippet management, Home/search entries, expansion, input monitoring, settings,

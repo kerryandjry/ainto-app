@@ -342,10 +342,8 @@ pub fn icon_of_path(path: &str) -> Option<Vec<u8>> {
 
                 let (rep, out_w, out_h) = if let Some(rep) = best_rep {
                     (rep, target, target)
-                } else if let Some(rep) = largest_rep {
-                    (rep, largest_w, largest_h)
                 } else {
-                    return None;
+                    (largest_rep?, largest_w, largest_h)
                 };
 
                 let new_image = NSImage::imageWithSize_flipped_drawingHandler(
