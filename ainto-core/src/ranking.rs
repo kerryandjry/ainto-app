@@ -4,7 +4,7 @@
 //! Score = count * 10 * decay, where decay decreases over days since last use.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -106,14 +106,18 @@ pub fn save_rankings(path: &Path, rankings: &HashMap<String, RankingEntry>) -> R
 /// cost a file read per lookup. The file is only ever written through
 /// `increment_and_save`, so the cache stays authoritative for this process.
 ///
-/// Assumes a single ranking file per process (always `<config_dir>/ranking.toml`);
-/// the first path passed in wins.
-static CACHE: Mutex<Option<HashMap<String, RankingEntry>>> = Mutex::new(None);
+/// Production uses one ranking path. Keying by path also keeps callers using
+/// separate temporary files isolated, including tests running concurrently.
+type RankingCache = HashMap<PathBuf, HashMap<String, RankingEntry>>;
+static CACHE: Mutex<Option<RankingCache>> = Mutex::new(None);
 
-/// Run `f` against the cached ranking table, loading it from disk on first use.
+/// Run `f` against this path's table, loading it from disk on first use.
 fn with_cache<T>(path: &Path, f: impl FnOnce(&mut HashMap<String, RankingEntry>) -> T) -> T {
     let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let rankings = guard.get_or_insert_with(|| load_rankings(path));
+    let cache = guard.get_or_insert_with(HashMap::new);
+    let rankings = cache
+        .entry(path.to_path_buf())
+        .or_insert_with(|| load_rankings(path));
     f(rankings)
 }
 
@@ -122,7 +126,7 @@ pub fn all_rankings(path: &Path) -> HashMap<String, RankingEntry> {
     with_cache(path, |rankings| rankings.clone())
 }
 
-/// Remove persisted rankings and clear the process-wide cache atomically.
+/// Remove this path's persisted rankings and clear only its cached table.
 pub fn reset(path: &Path) -> Result<(), Error> {
     let mut guard = CACHE.lock().unwrap_or_else(|error| error.into_inner());
     match std::fs::remove_file(path) {
@@ -130,7 +134,9 @@ pub fn reset(path: &Path) -> Result<(), Error> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    *guard = Some(HashMap::new());
+    guard
+        .get_or_insert_with(HashMap::new)
+        .insert(path.to_path_buf(), HashMap::new());
     Ok(())
 }
 
@@ -157,6 +163,58 @@ pub fn get_score(path: &Path, key: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn separate_paths_keep_independent_cached_tables_and_resets() {
+        let directory = std::env::temp_dir().join(format!(
+            "ainto-ranking-paths-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let first = directory.join("first.toml");
+        let second = directory.join("second.toml");
+        let key = "app:shared";
+        increment_and_save(&first, key);
+        increment_and_save(&second, key);
+        increment_and_save(&second, key);
+        assert_eq!(all_rankings(&first)[key].count, 1);
+        assert_eq!(all_rankings(&second)[key].count, 2);
+        assert_eq!(load_rankings(&first)[key].count, 1);
+        assert_eq!(load_rankings(&second)[key].count, 2);
+
+        // Returning to another path must retain its cached table, not reload it.
+        std::fs::write(&second, "[rankings]\n").unwrap();
+        assert_eq!(all_rankings(&first)[key].count, 1);
+        assert_eq!(all_rankings(&second)[key].count, 2);
+        reset(&first).unwrap();
+        assert_eq!(get_score(&first, key), 0);
+        assert_eq!(all_rankings(&second)[key].count, 2);
+        increment_and_save(&second, key);
+        assert_eq!(load_rankings(&second)[key].count, 3);
+        reset(&second).unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn concurrent_paths_do_not_share_counts() {
+        let directory = std::env::temp_dir().join(format!(
+            "ainto-ranking-parallel-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::thread::scope(|scope| {
+            for expected in 1..=4 {
+                let path = directory.join(format!("{expected}.toml"));
+                scope.spawn(move || {
+                    for _ in 0..expected {
+                        increment_and_save(&path, "app:shared");
+                    }
+                    assert_eq!(all_rankings(&path)["app:shared"].count, expected);
+                    assert_eq!(load_rankings(&path)["app:shared"].count, expected);
+                    reset(&path).unwrap();
+                });
+            }
+        });
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn reset_clears_the_cache_and_removes_the_file() {

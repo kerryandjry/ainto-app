@@ -76,6 +76,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Watch ~/.config/ainto/ for external file changes (e.g. manual TOML edits)
         watchConfigDirectory()
+
+        // Seed search's in-memory lists once, after installing the watchers so
+        // an external save cannot fall between the initial read and observation.
+        // Later edits are handled by the save paths and config watchers.
+        searchPanel?.viewModel.loadSnippets()
+        searchPanel?.viewModel.loadAICommands()
     }
 
     private static let watchedConfigFiles = ["snippets.toml", "ai-commands.toml", "config.toml"]
