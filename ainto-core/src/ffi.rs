@@ -178,12 +178,11 @@ pub extern "C" fn rc_increment_ranking(key: *const c_char) -> i32 {
     let score = crate::ranking::increment_and_save(&path, &k);
 
     // Also update in-memory AppIndex if it's an app path
-    if !k.starts_with("cmd:") {
-        if let Ok(mut idx) = APP_INDEX.lock() {
-            if let Some(ref mut index) = *idx {
-                index.update_ranking(&k);
-            }
-        }
+    if !k.starts_with("cmd:")
+        && let Ok(mut idx) = APP_INDEX.lock()
+        && let Some(ref mut index) = *idx
+    {
+        index.update_ranking(&k);
     }
     score
 }
@@ -206,10 +205,10 @@ pub extern "C" fn rc_reset_rankings() -> i32 {
         return -1;
     }
 
-    if let Ok(mut idx) = APP_INDEX.lock() {
-        if let Some(ref mut index) = *idx {
-            index.apply_rankings(&std::collections::HashMap::new());
-        }
+    if let Ok(mut idx) = APP_INDEX.lock()
+        && let Some(ref mut index) = *idx
+    {
+        index.apply_rankings(&std::collections::HashMap::new());
     }
     0
 }
@@ -224,13 +223,13 @@ pub extern "C" fn rc_update_ranking(app_path: *const c_char) {
     let score = crate::ranking::increment_and_save(&path, &key);
 
     // Update in-memory AppIndex
-    if let Ok(mut idx) = APP_INDEX.lock() {
-        if let Some(ref mut index) = *idx {
-            index.update_ranking(&key);
-            // Set the ranking to the frecency score
-            if let Some(app) = index.apps_mut().iter_mut().find(|a| a.path == key) {
-                app.ranking = score;
-            }
+    if let Ok(mut idx) = APP_INDEX.lock()
+        && let Some(ref mut index) = *idx
+    {
+        index.update_ranking(&key);
+        // Set the ranking to the frecency score
+        if let Some(app) = index.apps_mut().iter_mut().find(|a| a.path == key) {
+            app.ranking = score;
         }
     }
 }
