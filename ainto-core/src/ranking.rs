@@ -17,7 +17,14 @@ pub struct RankingEntry {
     pub last_used: i64, // unix timestamp
 }
 
+impl Default for RankingEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RankingEntry {
+    /// A first use: one hit, right now.
     pub fn new() -> Self {
         Self {
             count: 1,
@@ -35,7 +42,7 @@ impl RankingEntry {
     /// Decays over time: full score within 1 day, drops to 0 after 20 days.
     pub fn frecency_score(&self) -> i32 {
         let days_since = (now() - self.last_used) as f64 / 86400.0;
-        let decay = (1.0 - days_since * 0.05).max(0.0).min(1.0);
+        let decay = (1.0 - days_since * 0.05).clamp(0.0, 1.0);
         let raw = (self.count as f64 * 10.0 * decay) as i32;
         raw.min(100) // cap at 100
     }
@@ -145,8 +152,8 @@ pub fn increment_and_save(path: &Path, key: &str) -> i32 {
     with_cache(path, |rankings| {
         let entry = rankings
             .entry(key.to_string())
-            .and_modify(|e| e.increment())
-            .or_insert_with(RankingEntry::new);
+            .and_modify(|entry| entry.increment())
+            .or_default();
         let score = entry.frecency_score();
         let _ = save_rankings(path, rankings);
         score

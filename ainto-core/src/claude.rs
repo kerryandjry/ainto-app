@@ -105,10 +105,10 @@ impl ClaudeSession {
                 }
                 Ok(_) => {
                     // Try to extract session_id from init event
-                    if self.session_id.is_none() {
-                        if let Some(sid) = extract_session_id(&line) {
-                            self.session_id = Some(sid);
-                        }
+                    if self.session_id.is_none()
+                        && let Some(sid) = extract_session_id(&line)
+                    {
+                        self.session_id = Some(sid);
                     }
                     if let Some(text) = extract_text_from_stream_json(&line) {
                         self.response.push_str(&text);
@@ -130,7 +130,7 @@ impl ClaudeSession {
         // Read all stderr
         let stderr_text = if let Some(stderr) = self.child.stderr.take() {
             let reader = BufReader::new(stderr);
-            reader.lines().filter_map(|l| l.ok()).collect::<Vec<_>>().join("\n")
+            reader.lines().map_while(Result::ok).collect::<Vec<_>>().join("\n")
         } else {
             String::new()
         };
