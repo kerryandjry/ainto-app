@@ -66,9 +66,15 @@ pub fn load_rankings(path: &Path) -> HashMap<String, RankingEntry> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|content| {
-            // Try new format first
-            if let Ok(file) = toml::from_str::<RankingFile>(&content) {
-                return Some(file.rankings);
+            // Try the new format only when its table is actually present.
+            // Otherwise serde's defaulted field would accept a legacy file as
+            // an empty RankingFile before the migration below can run.
+            if let Ok(value) = toml::from_str::<toml::Value>(&content)
+                && value.get("rankings").is_some_and(toml::Value::is_table)
+            {
+                return toml::from_str::<RankingFile>(&content)
+                    .ok()
+                    .map(|file| file.rankings);
             }
             // Migrate from old format: key = i32
             if let Ok(old) = toml::from_str::<HashMap<String, i32>>(&content) {
@@ -170,6 +176,31 @@ pub fn get_score(path: &Path, key: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_counts_survive_migration_and_reload() {
+        let directory = std::env::temp_dir().join(format!(
+            "ainto-ranking-legacy-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let path = directory.join("ranking.toml");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            &path,
+            "\"/Applications/A.app\" = 3\n\"/Applications/B.app\" = 7\n",
+        )
+        .unwrap();
+
+        let migrated = load_rankings(&path);
+        assert_eq!(migrated["/Applications/A.app"].count, 3);
+        assert_eq!(migrated["/Applications/B.app"].count, 7);
+
+        let reloaded = load_rankings(&path);
+        assert_eq!(reloaded["/Applications/A.app"].count, 3);
+        assert_eq!(reloaded["/Applications/B.app"].count, 7);
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn separate_paths_keep_independent_cached_tables_and_resets() {
